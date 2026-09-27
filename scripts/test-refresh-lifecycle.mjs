@@ -48,15 +48,25 @@ async function runScenario(name, invoke, fireDeadline = false) {
     "#weekly-remaining",
     "#weekly-progress",
     "#weekly-reset",
+    "#mini-content",
+    "#mini-remaining",
+    "#mini-ring-progress",
+    "#mini-countdown",
+    "#mini-reset",
+    "#exit-compact",
     "#updated-at",
     "#refresh",
     "#settings",
     "#settings-panel",
+    "#opacity",
+    "#opacity-value",
+    "#compact-mode",
     "#open-usage",
     ".panel",
   ];
   const elements = new Map(selectors.map((selector) => [selector, new FakeElement()]));
   elements.get("#settings-panel").hidden = true;
+  elements.get("#mini-content").hidden = true;
   let deadlineCallback;
   let deadlineMs;
   const intervalMs = [];
@@ -101,6 +111,13 @@ async function runScenario(name, invoke, fireDeadline = false) {
   themeChoices.find((choice) => choice.dataset.theme === "cyan").listeners.get("click")();
   assert.equal(globalThis.document.body.dataset.theme, "cyan", `${name}: selected skin was not applied`);
   assert.equal(savedTheme, "cyan", `${name}: selected skin was not saved`);
+  elements.get("#compact-mode").listeners.get("click")();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode was not enabled`);
+  assert.equal(elements.get("#mini-content").hidden, false, `${name}: compact content was not shown`);
+  elements.get("#exit-compact").listeners.get("click")();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: compact mode was not disabled`);
   if (fireDeadline) {
     assert.equal(deadlineMs, 50_500);
     deadlineCallback();

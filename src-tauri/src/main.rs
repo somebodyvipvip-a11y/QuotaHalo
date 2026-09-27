@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow, WindowEvent,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -26,6 +26,8 @@ use tokio::{
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(50);
 const MAX_SESSION_ATTEMPTS: u8 = 3;
+const FULL_WINDOW_SIZE: PhysicalSize<u32> = PhysicalSize::new(300, 300);
+const COMPACT_WINDOW_SIZE: PhysicalSize<u32> = PhysicalSize::new(390, 180);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -453,6 +455,46 @@ fn hide_panel(window: WebviewWindow) {
 }
 
 #[tauri::command]
+fn set_widget_mode(minimal: bool, window: WebviewWindow) -> Result<(), String> {
+    let size = if minimal {
+        COMPACT_WINDOW_SIZE
+    } else {
+        FULL_WINDOW_SIZE
+    };
+    window
+        .set_size(size)
+        .map_err(|_| "无法调整 QuotaHalo 窗口大小。")?;
+    position_panel(&window);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_opacity(opacity: u8, window: WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongW, SetLayeredWindowAttributes, SetWindowLongW, GWL_EXSTYLE, LWA_ALPHA,
+            WS_EX_LAYERED,
+        };
+
+        let hwnd = window
+            .hwnd()
+            .map_err(|_| "无法设置 QuotaHalo 窗口透明度。")?;
+        let alpha = ((opacity.clamp(60, 100) as u16 * 255) / 100) as u8;
+        unsafe {
+            let style = GetWindowLongW(hwnd.0, GWL_EXSTYLE);
+            SetWindowLongW(hwnd.0, GWL_EXSTYLE, style | WS_EX_LAYERED as i32);
+            if SetLayeredWindowAttributes(hwnd.0, 0, alpha, LWA_ALPHA) == 0 {
+                return Err("Windows 未能应用窗口透明度。".into());
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (opacity, window);
+    Ok(())
+}
+
+#[tauri::command]
 fn open_usage_page() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -579,6 +621,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             refresh_quota,
             hide_panel,
+            set_widget_mode,
+            set_window_opacity,
             open_usage_page
         ])
         .run(tauri::generate_context!())

@@ -14,10 +14,19 @@ const elements = {
   weeklyRemaining: document.querySelector("#weekly-remaining"),
   weeklyProgress: document.querySelector("#weekly-progress"),
   weeklyReset: document.querySelector("#weekly-reset"),
+  miniContent: document.querySelector("#mini-content"),
+  miniRemaining: document.querySelector("#mini-remaining"),
+  miniProgress: document.querySelector("#mini-ring-progress"),
+  miniCountdown: document.querySelector("#mini-countdown"),
+  miniReset: document.querySelector("#mini-reset"),
+  exitCompact: document.querySelector("#exit-compact"),
   updatedAt: document.querySelector("#updated-at"),
   refresh: document.querySelector("#refresh"),
   settings: document.querySelector("#settings"),
   settingsPanel: document.querySelector("#settings-panel"),
+  opacity: document.querySelector("#opacity"),
+  opacityValue: document.querySelector("#opacity-value"),
+  compactMode: document.querySelector("#compact-mode"),
   openUsage: document.querySelector("#open-usage"),
 };
 
@@ -26,6 +35,8 @@ let refreshing = false;
 const AUTO_REFRESH_INTERVAL_MS = 180_000;
 const REFRESH_DEADLINE_MS = 50_500;
 const THEME_STORAGE_KEY = "quota-halo-skin";
+const OPACITY_STORAGE_KEY = "quota-halo-opacity";
+const MODE_STORAGE_KEY = "quota-halo-display-mode";
 const THEMES = new Set(["violet", "cyan", "indigo", "moss", "amber", "mono"]);
 
 function applyTheme(theme, persist = true) {
@@ -40,6 +51,36 @@ function applyTheme(theme, persist = true) {
 }
 
 try { applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || "violet", false); } catch { applyTheme("violet", false); }
+
+function normalizeOpacity(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 100;
+  return Math.max(60, Math.min(100, Math.round(number / 5) * 5));
+}
+
+function applyOpacity(value, persist = true) {
+  const opacity = normalizeOpacity(value);
+  elements.opacity.value = String(opacity);
+  elements.opacityValue.textContent = `${opacity}%`;
+  void invoke("set_window_opacity", { opacity }).catch(() => {});
+  if (persist) {
+    try { localStorage.setItem(OPACITY_STORAGE_KEY, String(opacity)); } catch { /* storage unavailable */ }
+  }
+}
+
+function applyDisplayMode(compact, persist = true) {
+  const enabled = Boolean(compact);
+  document.body.dataset.mode = enabled ? "compact" : "";
+  elements.miniContent.hidden = !enabled;
+  elements.compactMode.textContent = enabled ? "使用完整窗口" : "极简悬浮窗";
+  void invoke("set_widget_mode", { minimal: enabled }).catch(() => {});
+  if (persist) {
+    try { localStorage.setItem(MODE_STORAGE_KEY, enabled ? "compact" : "full"); } catch { /* storage unavailable */ }
+  }
+}
+
+try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
+try { applyDisplayMode(localStorage.getItem(MODE_STORAGE_KEY) === "compact", false); } catch { applyDisplayMode(false, false); }
 
 function timezoneLabel() {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "本地时区";
@@ -65,6 +106,14 @@ function formatCountdown(unixSeconds) {
   return hours > 0 ? `还剩 ${hours} 小时 ${minutes} 分钟` : `还剩 ${minutes} 分钟`;
 }
 
+function formatMiniCountdown(unixSeconds) {
+  const seconds = Math.max(0, Math.floor(unixSeconds - Date.now() / 1000));
+  if (seconds === 0) return "等待服务刷新额度";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours > 0 ? `距重置 ${hours}小时${minutes}分` : `距重置 ${minutes}分`;
+}
+
 function setWindow(target, quota, isWeekly = false) {
   if (!quota) {
     target.remaining.textContent = "未返回";
@@ -86,6 +135,21 @@ function setWindow(target, quota, isWeekly = false) {
   }
 }
 
+function setMiniWindow(quota) {
+  if (!quota) {
+    elements.miniRemaining.textContent = "—";
+    elements.miniProgress.style.strokeDashoffset = "100";
+    elements.miniCountdown.textContent = "服务未返回 5 小时额度";
+    elements.miniReset.textContent = "—";
+    return;
+  }
+  const remaining = Math.max(0, Math.min(100, 100 - quota.used_percent));
+  elements.miniRemaining.textContent = `${Math.round(remaining)}%`;
+  elements.miniProgress.style.strokeDashoffset = String(100 - remaining);
+  elements.miniCountdown.textContent = formatMiniCountdown(quota.resets_at);
+  elements.miniReset.textContent = `重置于 ${formatTime(quota.resets_at, true)}`;
+}
+
 function render() {
   if (!snapshot) return;
   const failed = snapshot.status === "unavailable";
@@ -103,6 +167,7 @@ function render() {
       snapshot.weekly,
       true,
     );
+    setMiniWindow(snapshot.primary);
   }
   elements.updatedAt.textContent = snapshot.updated_at
     ? `更新于 ${formatTime(snapshot.updated_at)}`
@@ -149,6 +214,13 @@ elements.settings.addEventListener("click", () => {
   elements.settingsPanel.hidden = !open;
   elements.settings.setAttribute("aria-expanded", String(open));
 });
+elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
+elements.compactMode.addEventListener("click", () => {
+  applyDisplayMode(document.body.dataset.mode !== "compact");
+  elements.settingsPanel.hidden = true;
+  elements.settings.setAttribute("aria-expanded", "false");
+});
+elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
 document.querySelectorAll(".theme-choice").forEach((choice) => {
   choice.addEventListener("click", () => {
     applyTheme(choice.dataset.theme);

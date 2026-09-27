@@ -37,7 +37,7 @@ cargo test --manifest-path src-tauri/Cargo.toml live_logged_in_codex_returns_quo
 cargo build --release --manifest-path src-tauri/Cargo.toml
 ```
 
-裸 EXE 为 `src-tauri/target/release/quota-halo.exe`，交付副本为 `dist/QuotaHalo-0.1.11.exe`。安装包可用 `npm run build` 另行生成。运行时需要系统 WebView2 与本机已登录的 Codex CLI；应用自动查找 `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`，也支持 PATH 回退。
+裸 EXE 为 `src-tauri/target/release/quota-halo.exe`，交付副本为 `dist/QuotaHalo-0.1.12.exe`。完整窗口高度为 300px；设置提供 60%–100% 的 Windows 原生窗口透明度和极简悬浮窗模式。极简窗口为 390×180px，只显示 5 小时额度圆环、倒计时和本地重置时刻。安装包可用 `npm run build` 另行生成。运行时需要系统 WebView2 与本机已登录的 Codex CLI；应用自动查找 `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`，也支持 PATH 回退。
 
 ## 后续工作
 
