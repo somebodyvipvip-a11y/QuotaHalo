@@ -114,8 +114,10 @@ h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 19px; f
 .opacity-setting span { display: flex; justify-content: space-between; }
 .opacity-setting output { color: #fff; font-variant-numeric: tabular-nums; }
 .opacity-setting input { width: 100%; accent-color: var(--accent); }
-.compact-mode { width: 100%; margin-top: 10px; padding: 7px 8px; border: 1px solid var(--pill-border); border-radius: 8px; background: var(--pill-bg); color: var(--accent-strong); font: inherit; font-size: 10.5px; cursor: pointer; }
-.compact-mode:hover { background: var(--track); }
+.display-mode-title { margin-top: 10px; }
+.display-mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.display-mode-choice { padding: 7px 5px; border: 1px solid var(--pill-border); border-radius: 8px; background: transparent; color: var(--secondary); font: inherit; font-size: 10px; cursor: pointer; }
+.display-mode-choice:hover, .display-mode-choice.is-active { background: var(--pill-bg); color: var(--accent-strong); }
 .mini-content { position: relative; display: flex; align-items: center; height: 100%; padding: 18px 28px; gap: 23px; cursor: grab; }
 .mini-content[hidden] { display: none; }
 .mini-ring { position: relative; flex: 0 0 126px; width: 126px; height: 126px; }

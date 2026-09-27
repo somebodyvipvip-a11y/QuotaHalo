@@ -26,7 +26,6 @@ const elements = {
   settingsPanel: document.querySelector("#settings-panel"),
   opacity: document.querySelector("#opacity"),
   opacityValue: document.querySelector("#opacity-value"),
-  compactMode: document.querySelector("#compact-mode"),
   openUsage: document.querySelector("#open-usage"),
 };
 
@@ -72,7 +71,9 @@ function applyDisplayMode(compact, persist = true) {
   const enabled = Boolean(compact);
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
-  elements.compactMode.textContent = enabled ? "使用完整窗口" : "极简悬浮窗";
+  document.querySelectorAll(".display-mode-choice").forEach((choice) => {
+    choice.classList.toggle("is-active", choice.dataset.displayMode === (enabled ? "compact" : "full"));
+  });
   void invoke("set_widget_mode", { minimal: enabled }).catch(() => {});
   if (persist) {
     try { localStorage.setItem(MODE_STORAGE_KEY, enabled ? "compact" : "full"); } catch { /* storage unavailable */ }
@@ -215,10 +216,12 @@ elements.settings.addEventListener("click", () => {
   elements.settings.setAttribute("aria-expanded", String(open));
 });
 elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
-elements.compactMode.addEventListener("click", () => {
-  applyDisplayMode(document.body.dataset.mode !== "compact");
-  elements.settingsPanel.hidden = true;
-  elements.settings.setAttribute("aria-expanded", "false");
+document.querySelectorAll(".display-mode-choice").forEach((choice) => {
+  choice.addEventListener("click", () => {
+    applyDisplayMode(choice.dataset.displayMode === "compact");
+    elements.settingsPanel.hidden = true;
+    elements.settings.setAttribute("aria-expanded", "false");
+  });
 });
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
 document.querySelectorAll(".theme-choice").forEach((choice) => {

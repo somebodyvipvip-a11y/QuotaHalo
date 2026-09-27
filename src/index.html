@@ -82,7 +82,11 @@
           <span>透明度 <output id="opacity-value">100%</output></span>
           <input id="opacity" type="range" min="60" max="100" step="5" value="100" />
         </label>
-        <button id="compact-mode" class="compact-mode" type="button">极简悬浮窗</button>
+        <p class="settings-title display-mode-title">显示模式</p>
+        <div class="display-mode-grid" role="group" aria-label="显示模式">
+          <button class="display-mode-choice" type="button" data-display-mode="full">完整模式</button>
+          <button class="display-mode-choice" type="button" data-display-mode="compact">极简模式</button>
+        </div>
       </aside>
     </main>
     <script type="module" src="./main.js"></script>

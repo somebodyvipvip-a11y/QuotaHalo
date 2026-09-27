@@ -60,7 +60,6 @@ async function runScenario(name, invoke, fireDeadline = false) {
     "#settings-panel",
     "#opacity",
     "#opacity-value",
-    "#compact-mode",
     "#open-usage",
     ".panel",
   ];
@@ -75,10 +74,19 @@ async function runScenario(name, invoke, fireDeadline = false) {
     choice.dataset.theme = theme;
     return choice;
   });
+  const displayModeChoices = ["full", "compact"].map((mode) => {
+    const choice = new FakeElement();
+    choice.dataset.displayMode = mode;
+    return choice;
+  });
   globalThis.document = {
     body: { dataset: {} },
     querySelector: (selector) => elements.get(selector),
-    querySelectorAll: (selector) => selector === ".theme-choice" ? themeChoices : [],
+    querySelectorAll: (selector) => {
+      if (selector === ".theme-choice") return themeChoices;
+      if (selector === ".display-mode-choice") return displayModeChoices;
+      return [];
+    },
   };
   let savedTheme;
   globalThis.localStorage = { getItem: () => null, setItem: (_key, value) => { savedTheme = value; } };
@@ -111,7 +119,7 @@ async function runScenario(name, invoke, fireDeadline = false) {
   themeChoices.find((choice) => choice.dataset.theme === "cyan").listeners.get("click")();
   assert.equal(globalThis.document.body.dataset.theme, "cyan", `${name}: selected skin was not applied`);
   assert.equal(savedTheme, "cyan", `${name}: selected skin was not saved`);
-  elements.get("#compact-mode").listeners.get("click")();
+  displayModeChoices.find((choice) => choice.dataset.displayMode === "compact").listeners.get("click")();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode was not enabled`);
   assert.equal(elements.get("#mini-content").hidden, false, `${name}: compact content was not shown`);
