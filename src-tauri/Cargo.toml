@@ -1,6 +1,6 @@
 [package]
 name = "quota-halo"
-version = "0.1.13"
+version = "0.1.14"
 description = "QuotaHalo — a private Codex quota tray clock"
 authors = ["Local user"]
 edition = "2021"

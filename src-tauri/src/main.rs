@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -26,8 +26,10 @@ use tokio::{
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(50);
 const MAX_SESSION_ATTEMPTS: u8 = 3;
-const FULL_WINDOW_SIZE: PhysicalSize<u32> = PhysicalSize::new(300, 300);
-const COMPACT_WINDOW_SIZE: PhysicalSize<u32> = PhysicalSize::new(390, 180);
+const FULL_WINDOW_WIDTH: f64 = 300.0;
+const FULL_WINDOW_HEIGHT: f64 = 300.0;
+const COMPACT_WINDOW_WIDTH: f64 = 390.0;
+const COMPACT_WINDOW_HEIGHT: f64 = 180.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -430,6 +432,14 @@ fn position_panel(window: &WebviewWindow) {
     let _ = window.set_position(PhysicalPosition::new(x, y));
 }
 
+fn widget_size(minimal: bool) -> LogicalSize<f64> {
+    if minimal {
+        LogicalSize::new(COMPACT_WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT)
+    } else {
+        LogicalSize::new(FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT)
+    }
+}
+
 fn show_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         position_panel(&window);
@@ -456,13 +466,8 @@ fn hide_panel(window: WebviewWindow) {
 
 #[tauri::command]
 fn set_widget_mode(minimal: bool, window: WebviewWindow) -> Result<(), String> {
-    let size = if minimal {
-        COMPACT_WINDOW_SIZE
-    } else {
-        FULL_WINDOW_SIZE
-    };
     window
-        .set_size(size)
+        .set_size(widget_size(minimal))
         .map_err(|_| "无法调整 QuotaHalo 窗口大小。")?;
     position_panel(&window);
     Ok(())
@@ -742,6 +747,14 @@ mod tests {
         assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(15));
         assert_eq!(REFRESH_TIMEOUT, Duration::from_secs(50));
         assert_eq!(MAX_SESSION_ATTEMPTS, 3);
+    }
+
+    #[test]
+    fn display_modes_use_logical_dimensions_for_high_dpi_displays() {
+        let full = widget_size(false);
+        let compact = widget_size(true);
+        assert_eq!((full.width, full.height), (300.0, 300.0));
+        assert_eq!((compact.width, compact.height), (390.0, 180.0));
     }
 
     #[test]
