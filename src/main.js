@@ -23,6 +23,7 @@ const elements = {
   updatedAt: document.querySelector("#updated-at"),
   refresh: document.querySelector("#refresh"),
   settings: document.querySelector("#settings"),
+  compactToggle: document.querySelector("#compact-toggle"),
   settingsPanel: document.querySelector("#settings-panel"),
   opacity: document.querySelector("#opacity"),
   opacityValue: document.querySelector("#opacity-value"),
@@ -71,9 +72,6 @@ function applyDisplayMode(compact, persist = true) {
   const enabled = Boolean(compact);
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
-  document.querySelectorAll(".display-mode-choice").forEach((choice) => {
-    choice.classList.toggle("is-active", choice.dataset.displayMode === (enabled ? "compact" : "full"));
-  });
   void invoke("set_widget_mode", { minimal: enabled }).catch(() => {});
   if (persist) {
     try { localStorage.setItem(MODE_STORAGE_KEY, enabled ? "compact" : "full"); } catch { /* storage unavailable */ }
@@ -112,7 +110,7 @@ function formatMiniCountdown(unixSeconds) {
   if (seconds === 0) return "等待服务刷新额度";
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0 ? `距重置 ${hours}小时${minutes}分` : `距重置 ${minutes}分`;
+  return hours > 0 ? `余 ${hours}h ${minutes}m` : `余 ${minutes}m`;
 }
 
 function setWindow(target, quota, isWeekly = false) {
@@ -148,7 +146,7 @@ function setMiniWindow(quota) {
   elements.miniRemaining.textContent = `${Math.round(remaining)}%`;
   elements.miniProgress.style.strokeDashoffset = String(100 - remaining);
   elements.miniCountdown.textContent = formatMiniCountdown(quota.resets_at);
-  elements.miniReset.textContent = `重置于 ${formatTime(quota.resets_at, true)}`;
+  elements.miniReset.textContent = `${formatTime(quota.resets_at)} 重置`;
 }
 
 function render() {
@@ -216,13 +214,7 @@ elements.settings.addEventListener("click", () => {
   elements.settings.setAttribute("aria-expanded", String(open));
 });
 elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
-document.querySelectorAll(".display-mode-choice").forEach((choice) => {
-  choice.addEventListener("click", () => {
-    applyDisplayMode(choice.dataset.displayMode === "compact");
-    elements.settingsPanel.hidden = true;
-    elements.settings.setAttribute("aria-expanded", "false");
-  });
-});
+elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
 document.querySelectorAll(".theme-choice").forEach((choice) => {
   choice.addEventListener("click", () => {

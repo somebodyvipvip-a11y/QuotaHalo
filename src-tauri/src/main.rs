@@ -28,8 +28,8 @@ const REFRESH_TIMEOUT: Duration = Duration::from_secs(50);
 const MAX_SESSION_ATTEMPTS: u8 = 3;
 const FULL_WINDOW_WIDTH: f64 = 300.0;
 const FULL_WINDOW_HEIGHT: f64 = 300.0;
-const COMPACT_WINDOW_WIDTH: f64 = 390.0;
-const COMPACT_WINDOW_HEIGHT: f64 = 180.0;
+const COMPACT_WINDOW_WIDTH: f64 = 135.0;
+const COMPACT_WINDOW_HEIGHT: f64 = 60.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -754,7 +754,7 @@ mod tests {
         let full = widget_size(false);
         let compact = widget_size(true);
         assert_eq!((full.width, full.height), (300.0, 300.0));
-        assert_eq!((compact.width, compact.height), (390.0, 180.0));
+        assert_eq!((compact.width, compact.height), (135.0, 60.0));
     }
 
     #[test]
