@@ -6,7 +6,7 @@ Windows 托盘第一版已经实现 Codex 5 小时和每周额度显示。用户
 
 本轮修复加入 Windows 原生体验和 App Server 会话复用：浏览器入口改用 `ShellExecuteW`（不启动 `cmd.exe`），浮层空白区域支持拖动，窗口用 `SetWindowRgn` 应用与 CSS 相同半径的原生圆角。Tauri 原生阴影及 CSS 外投影已关闭，透明客户区外不会留下白色背景。底部设置按钮提供紫雾、青蓝、靛蓝、墨绿、琥珀和灰阶六种低明度皮肤，皮肤名写入 WebView 本机存储；每种皮肤的主文字均为白色。设置与刷新按钮使用 Lucide SVG 图标。App Server 在 QuotaHalo 进程生命周期内复用，账号与额度读取串行执行，JSON-RPC 请求编号递增；`-32603` 或 stdio 断开会销毁当前子进程、重新初始化全新的 App Server 会话并完整重读一次。启动时立即读取，之后每 3 分钟读取。每个 JSON-RPC 步骤最多 15 秒，整次读取最多 50 秒；前端以 50.5 秒保险超时并在 `finally` 中清除旋转状态。Windows 子进程使用 `CREATE_NO_WINDOW`；若 `HOME` 或 `CODEX_HOME` 缺失，从 `USERPROFILE` 补足本地配置目录。
 
-额度字段解析保留官方 camelCase 输入和前端 snake_case 输出。初始化后直接调用 `account/rateLimits/read`，不再调用会偶发挂起的 `account/read`；只选择 `rateLimitsByLimitId.codex`，缺失时回退到 `rateLimits`；窗口长度必须精确为 300 或 10,080 分钟。服务仍返回错误或超时时显示明确错误，不推算额度。
+额度字段解析保留官方 camelCase 输入和前端 snake_case 输出。初始化后直接调用 `account/rateLimits/read`，不再调用会偶发挂起的 `account/read`；只选择 `rateLimitsByLimitId.codex`，缺失时回退到 `rateLimits`；窗口长度必须精确为 300 或 10,080 分钟。单次 RPC 最多等待 15 秒，超时、stdio 断开或 `-32603` 会销毁子进程并以递增短退避重新初始化最多三个会话，总读取最多 50 秒。服务仍无响应时显示明确错误，不推算额度。
 
 ## 主要文件
 
@@ -37,7 +37,7 @@ cargo test --manifest-path src-tauri/Cargo.toml live_logged_in_codex_returns_quo
 cargo build --release --manifest-path src-tauri/Cargo.toml
 ```
 
-裸 EXE 为 `src-tauri/target/release/quota-halo.exe`，交付副本为 `dist/QuotaHalo-0.1.10.exe`。安装包可用 `npm run build` 另行生成。运行时需要系统 WebView2 与本机已登录的 Codex CLI；应用自动查找 `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`，也支持 PATH 回退。
+裸 EXE 为 `src-tauri/target/release/quota-halo.exe`，交付副本为 `dist/QuotaHalo-0.1.11.exe`。安装包可用 `npm run build` 另行生成。运行时需要系统 WebView2 与本机已登录的 Codex CLI；应用自动查找 `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`，也支持 PATH 回退。
 
 ## 后续工作
 

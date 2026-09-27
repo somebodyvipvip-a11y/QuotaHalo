@@ -6,7 +6,7 @@ Windows 托盘小工具，用于显示本机已登录 Codex 的 5 小时和每�
 
 直接运行便携版裸 EXE：
 
-`dist/QuotaHalo-0.1.10.exe`
+`dist/QuotaHalo-0.1.11.exe`
 
 应用启动时显示浮层，托盘左键可打开或隐藏。浮层可从非按钮区域拖动，使用 Windows 原生圆角裁剪；已关闭 Windows 原生窗口阴影，透明客户区外不会留下白色边框。底部齿轮可切换紫雾、青蓝、靛蓝、墨绿、琥珀和灰阶皮肤，选择仅保存为本机 WebView 的皮肤名称。设置与刷新使用 [Lucide](https://github.com/lucide-icons/lucide) SVG 图标。右键菜单提供刷新、打开 ChatGPT 用量页面和退出操作。打开用量页面直接调用系统默认浏览器，不经过控制台窗口。
 
@@ -31,7 +31,7 @@ cargo build --release --manifest-path src-tauri/Cargo.toml
 1. `initialize`，然后发送 `initialized` 通知。
 2. `account/rateLimits/read`。
 
-应用只在内存中解析 `usedPercent`、`windowDurationMins` 和 `resetsAt`。它优先使用 `rateLimitsByLimitId.codex`，回退到 `rateLimits`，从 `primary` 与 `secondary` 收集窗口，并且只显示窗口长度恰好为 300 分钟（5 小时）和 10,080 分钟（每周）的额度。剩余比例由 `100 - usedPercent` 计算；`resetsAt` 是秒级 Unix 时间戳，在界面中按 Windows 本地时区格式化。启动时立即读取一次，之后每 3 分钟刷新。为规避桌面 Codex 的账号详情调用偶发挂起，QuotaHalo 不再调用 `account/read`，而是在初始化后直接读取官方的 `account/rateLimits/read`。单个 JSON-RPC 请求最多等待 15 秒，整次读取最多等待 50 秒；遇到 `-32603` 或 stdio 断开时，QuotaHalo 会销毁当前子进程、重新初始化全新的 App Server 会话，并完整重读一次。超过时限或服务仍拒绝时，旋转状态会停止并显示错误，不显示猜测值。
+应用只在内存中解析 `usedPercent`、`windowDurationMins` 和 `resetsAt`。它优先使用 `rateLimitsByLimitId.codex`，回退到 `rateLimits`，从 `primary` 与 `secondary` 收集窗口，并且只显示窗口长度恰好为 300 分钟（5 小时）和 10,080 分钟（每周）的额度。剩余比例由 `100 - usedPercent` 计算；`resetsAt` 是秒级 Unix 时间戳，在界面中按 Windows 本地时区格式化。启动时立即读取一次，之后每 3 分钟刷新。为规避桌面 Codex 的账号详情调用偶发挂起，QuotaHalo 不再调用 `account/read`，而是在初始化后直接读取官方的 `account/rateLimits/read`。单个 JSON-RPC 请求最多等待 15 秒；超时、stdio 断开或 `-32603` 时，会销毁当前子进程，以递增短退避重新初始化最多三个全新会话后完整重读。总读取时限保持 50 秒。超过时限或服务仍拒绝时，旋转状态会停止并显示错误，不显示猜测值。
 
 不会读取、复制、打印、保存认证令牌、邮箱或 App Server 原始响应。服务不可用、未登录、超时或未返回目标窗口时，界面不会猜测数值，而会展示对应状态和 ChatGPT 用量页入口。
 

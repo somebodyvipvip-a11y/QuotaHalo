@@ -69,8 +69,8 @@ function setWindow(target, quota, isWeekly = false) {
   if (!quota) {
     target.remaining.textContent = "未返回";
     target.reset.textContent = "服务未返回该额度窗口";
+    if (target.progress) target.progress.style.width = "0%";
     if (!isWeekly) {
-      if (target.progress) target.progress.style.width = "0%";
       elements.primaryCountdown.textContent = "无法计算倒计时";
     }
     return;

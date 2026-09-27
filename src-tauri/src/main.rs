@@ -25,6 +25,7 @@ use tokio::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(50);
+const MAX_SESSION_ATTEMPTS: u8 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -208,7 +209,7 @@ async fn read_response(
 }
 
 fn should_restart_session(error: &AppServerError, attempt: u8) -> bool {
-    attempt == 0
+    attempt + 1 < MAX_SESSION_ATTEMPTS
         && matches!(
             error,
             AppServerError::Transport(_) | AppServerError::Rpc { code: -32603, .. }
@@ -349,12 +350,12 @@ impl AppServerSession {
 impl AppServerClient {
     async fn fetch_quota(&self) -> Result<QuotaSnapshot, AppServerError> {
         let mut session_slot = self.session.lock().await;
-        for attempt in 0..2 {
+        for attempt in 0..MAX_SESSION_ATTEMPTS {
             if session_slot.is_none() {
                 match AppServerSession::launch().await {
                     Ok(session) => *session_slot = Some(session),
                     Err(error) if should_restart_session(&error, attempt) => {
-                        sleep(Duration::from_millis(350)).await;
+                        sleep(Duration::from_millis(350 * u64::from(attempt + 1))).await;
                         continue;
                     }
                     Err(error) => return Err(error),
@@ -368,11 +369,11 @@ impl AppServerClient {
                 .await;
             match result {
                 Err(error) if should_restart_session(&error, attempt) => {
-                    // A -32603 response is emitted by a poisoned App Server request context.
-                    // Retrying on that same stdio connection repeats the failure.  Dropping the
-                    // process gives the logged-in Codex service a fresh RPC session instead.
+                    // A stalled transport or -32603 response can poison this stdio context.
+                    // Dropping the process before retrying gives the logged-in Codex service a
+                    // fresh RPC session, instead of repeating the request on the stuck pipe.
                     *session_slot = None;
-                    sleep(Duration::from_millis(350)).await;
+                    sleep(Duration::from_millis(350 * u64::from(attempt + 1))).await;
                 }
                 Err(error) => {
                     *session_slot = None;
@@ -675,7 +676,8 @@ mod tests {
             code: -32000,
         };
         assert!(should_restart_session(&internal, 0));
-        assert!(!should_restart_session(&internal, 1));
+        assert!(should_restart_session(&internal, 1));
+        assert!(!should_restart_session(&internal, 2));
         assert!(!should_restart_session(&rejected, 0));
         assert!(should_restart_session(
             &AppServerError::Transport("closed".into()),
@@ -695,6 +697,7 @@ mod tests {
     fn refresh_timeout_allows_the_initialize_and_rate_limit_calls() {
         assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(15));
         assert_eq!(REFRESH_TIMEOUT, Duration::from_secs(50));
+        assert_eq!(MAX_SESSION_ATTEMPTS, 3);
     }
 
     #[test]
