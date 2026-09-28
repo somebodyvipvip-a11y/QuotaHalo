@@ -1,6 +1,7 @@
 # Handoff：读取 Qoder 剩余积分并接入 QuotaHalo
 
 状态：**调研文档，未改动任何代码**。2026-09-28 更新：更正「代码已存在」的现状、补全本机能否直读的全量验证、新增官网同源接口，并记录已选定的取数路线（自带 WebView2 登录）。
+2026-09-28 复核：TRAE 的网页登录链路已实装，据此重写 §6.1——补齐 TRAE 真实机制拆解、三方对比表、兼容性限制与适配 Qoder 的改动清单（该节取代原先基于 POC 的推测性计划）。
 
 调研环境：Windows，Qoder CN 桌面版 0.3.4（运行中）/ 0.4.1、0.4.3（待更新），本机账号已登录（`~/.qoder-cn/.qoder-app-status.json` 有 `logged_in: true`）。
 
@@ -138,14 +139,88 @@ base URL：OpenAPI `https://openapi.qoder.com.cn`，官网 `https://qoder.com.cn
 
 ## 6. 落地步骤（下一步执行，按顺序）
 
-### 6.1 POC：先证明「远程页面能把数据送回 Rust」
+### 6.1 复用 TRAE 登录窗口方案的可行性结论（2026-09-28 复核，取代原 POC 计划）
 
-现状（`src-tauri/tauri.conf.json`、`capabilities/default.json`）：只有一个 `label: "main"` 窗口；`app.withGlobalTauri: true`；`security.csp = "default-src 'self'"`；capability `windows: ["main"]`、权限仅 `core:default` + `core:window:allow-start-dragging`。
+**结论：可复用的是「外壳」，不可复用的是「内容」。** 登录窗口、轮询、凭据落库、失败态这一整套骨架能直接搬；凭据提取的细节、取数接口和解析必须重写，且有一个真正的阻塞项。
 
-1. 新增第二个窗口（如 `label: "qoder-auth"`）加载 `https://qoder.com.cn/account/usage`。
-2. 要在**远程页面**里 `fetch` 并回传 Rust，必须给 capability 加 `remote: { urls: ["https://qoder.com.cn/*"] }` 并列入该 window label；先验证 Tauri 2 是否向远程 URL 注入 `window.__TAURI__`（`withGlobalTauri` 对远程页面的生效范围是这条路线最大的不确定点）。
-3. POC 判定标准：Rust 侧收到一段 JSON，并只打印**字段名**。
-4. 若 2 不成立，退化方案（按成本排序）：① 在该 WebView 里直接读渲染后的用量面板文本（DOM 文案，脆弱但无需 IPC）；② 用 WebView2 原生 `CookieManager` 导出会话（需 `windows` crate 的 WebView2 接口）再交给现有 `reqwest` 适配器。
+#### 6.1.1 先纠正一个前提：TRAE 并不从页面里抓积分数值
+
+准确定义是：**从登录后的页面里取出凭据，再由 Rust 用 `reqwest` 直接调私有接口取数。** 页面上的积分数字从头到尾没被读过（全仓检索 `innerText` / `textContent` / DOM 抓取，登录链路里零命中）。已核对的完整链路：
+
+| 步骤 | 实现 | 位置 |
+| --- | --- | --- |
+| 1. 弹出独立登录窗口 | `WebviewWindowBuilder::new(&app, "trae-auth", WebviewUrl::External("https://www.trae.cn/dashboard#usage"))`，配独立 `data_directory` = `app_local_data_dir/trae-login-profile` | `main.rs:626-641` |
+| 2. 登录态跨重启保留 | 由 WebView2 该 profile 自身持久化 | 同上 |
+| 3. Rust 单向轮询页面 | 每 2 s、最多 180 次：`eval_with_callback` 在页面里执行 JS 读 `localStorage['Cloud-IDE-Token']`；`cookies_for_url` 读 `X-Cloudide-Session` | `main.rs:565-595`、`645-677` |
+| 4. 「登录成功」= 真接口能取到数 | `persist_trae_login` 先用候选凭据实调 `user_current_entitlement_list`，仅 `status == "ready"` 才落库 | `main.rs:597-623` |
+| 5. 持久化 | Windows 凭据管理器 `QuotaHalo/trae-token`、`QuotaHalo/trae-session` | `credential_store.rs` |
+| 6. 取数 | `reqwest` POST 私有接口，支持 bearer / cloudide / jwt / cookie 四种头 | `external_credits.rs:258-321` |
+| 7. 换号与清除 | `forget_trae` 删凭据 + `clear_all_browsing_data()` 清 profile | `main.rs:530-555` |
+
+**这条链路最值得复用的地方**：远程页面从不回调 Rust（capability 只有 `windows: ["main"]`，也没有 `remote.urls`），页面只被 Rust 单向 `eval`。因此原 §6.1 里那个最大不确定点——「Tauri 2 会不会给远程页面注入 `__TAURI__`」——**已经被绕开**：不需要改 capability、不需要改 CSP、没有 CORS、没有远程 IPC 注入问题。Qoder 应当沿用这个形态。
+
+#### 6.1.2 对比一：登录授权流程
+
+| 维度 | TRAE | Qoder | 可复用 |
+| --- | --- | --- | --- |
+| 入口 URL | `https://www.trae.cn/dashboard#usage`（同站 SPA，hash 路由） | `https://qoder.com.cn/account/usage`（未登录 302 → `users/sign-in?oauth_callback=...`） | ✅ 换 URL 即可 |
+| 登录体系 | TRAE 站内账号 | **阿里云体系**（个人／企业／阿里云登录／注册） | ⚠️ 结构不同 |
+| 是否会新开窗口或弹窗 | 站内表单，无 | SSO 可能 `window.open` 弹窗或跳第三方域 | ❌ Tauri 默认拒绝新窗口 |
+| 长／短凭据分层 | 长会话 Cookie + 短 JWT，可用 `GetUserToken` **静默续期** | 官网控制台只有 Cookie 会话，**无对应续期接口** | ❌ 续期层不能照搬 |
+| 凭据载体 | 页面 `localStorage`（JS 可读）**＋** HttpOnly Cookie | 纯 Cookie 会话（无 Cookie 即 401） | ⚠️ 需换提取方式 |
+| 「登录完成」信号 | localStorage token 与基线不同 | 无对应物 | ⚠️ 判定逻辑要重写 |
+
+#### 6.1.3 对比二：页面结构与凭据提取
+
+| 维度 | TRAE | Qoder | 可复用 |
+| --- | --- | --- | --- |
+| 提取手段 | `eval_with_callback` 注入 JS 读 localStorage | 不需要 eval，只用 `cookies_for_url("https://qoder.com.cn/")` | ✅ 代码反而更简单 |
+| HttpOnly Cookie | `X-Cloudide-Session` 实测可取到（走 WebView2 CookieManager，不受 JS 可见性限制） | 未知，但机制同类，预期可取 | ⚠️ 待 POC 确认 Cookie 名 |
+| 页面域 vs 取数域 | `www.trae.cn` ↔ `api.trae.com.cn`（跨站，靠请求头） | 同为 `qoder.com.cn`（**同源，最省事**） | ✅ 比 TRAE 更简单 |
+| profile 隔离 | 独立 `trae-login-profile` | 需新增 `qoder-login-profile` | ✅ 照抄 |
+| 是否需要读页面 DOM 数字 | 不需要 | 不需要（有 Cookie）→ 仅 Cookie 路线被否时才退化 | ✅ |
+
+#### 6.1.4 对比三：积分展示与数据面
+
+| 维度 | TRAE | Qoder | 可复用 |
+| --- | --- | --- | --- |
+| 取数接口 | `POST api.trae.com.cn/trae/api/v2/pay/user_current_entitlement_list` | 官网路线：`GET qoder.com.cn/api/v2/me/usages/big_model_credits` | ❌ 接口与解析都要新写 |
+| 现有代码用的接口 | 同上（已实现） | `GET openapi.qoder.com.cn/sash/api/v2/me/usage`，**仅 Bearer 可用，WebView Cookie 帮不上忙** | ❌ 两条路并存，不能混用 |
+| 响应字段 | `...quota.credits_limit` / `usage.credits_amount`；`-1` = 不限量 | 接口 A 已知（`displayMode`/`qoderUsage.userQuota{total,used}`）；**接口 B 字段名未知** | ❌ **头号阻塞项** |
+| 错误体 | `code` / `message` | 官网域是 `errorCode` / `errorMessage`，与 openapi 域不同 | ⚠️ 需双分支 |
+| 企业模式 | 无此概念 | `displayMode=enterprise` 无数值，只能缺失 + 跳转 | ⚠️ 已实现，保留 |
+| 展示口径 | 只显示数值，无进度条 | 只显示数值，无进度条 | ✅ 前端零改动 |
+
+#### 6.1.5 兼容性限制：必须认账的四条
+
+1. **接口 B 响应字段名未知（唯一硬阻塞）**。前端包只看得到请求、看不到响应。「能取到 Cookie」≠「能解析出数值」。可以合理假设仍是 `{total, used}` 语义，但按项目纪律不能凭假设写解析——必须先抓一次真实 JSON 的字段名。
+2. **阿里云 SSO 的弹窗风险**。`qoder.com.cn` 登录走阿里云账号体系，若 SSO 以 `window.open` 或跳第三方域完成，Tauri 默认拒绝新建窗口，登录会直接卡死。需要在 builder 上挂 `on_new_window`：允许同窗口内导航，或把第三方登录页交给系统浏览器并处理回跳。**这是 TRAE 完全没有的成本。**
+3. **凭据白名单与体积**。`credential_store.rs:15` 的 service 白名单要加 `qoder-session`；`write` 有 2560 字节上限，多 Cookie 串可能偏紧，需实测或只保留必需的 1–2 个 Cookie。
+4. **维护成本翻倍**。走 WebView 后 Qoder 会同时存在两条取数路径（PAT→openapi / Cookie→官网）。按项目「不与 Codex 共用认证状态、每服务独立适配器」的约定，两条必须各自独立；官网域接口无文档、无兼容承诺（当前前端包 `qbase/qoder/0.0.711`）。
+
+#### 6.1.6 若确定适配，关键改动清单（按依赖顺序）
+
+| # | 改动 | 位置 |
+| --- | --- | --- |
+| 0 | **前置（阻塞）**：抓一次 `GET /api/v2/me/usages/big_model_credits` 真实响应，**只记字段名**，补进本文 §5 | — |
+| 1 | 抽出公共「登录窗口 + 轮询」助手，TRAE 与 Qoder 共用 | 由 `main.rs:626-679` 抽取 |
+| 2 | 新增 `QODER_WEB_URL` 与 `parse_qoder_web(&Value)`，处理 `displayMode` / `errorCode` / `Unauthorized` 分支 | `external_credits.rs` |
+| 3 | 新增 `fetch_qoder_cookie(cookie: &str)`：`GET` + `Cookie:` 头，401/403 判过期；**不动**现有 `fetch_qoder` | `external_credits.rs` |
+| 4 | 新增 `open_qoder_login`：label `qoder-auth`、`data_directory` = `qoder-login-profile`、`on_new_window` 处理 | `main.rs`（照 `open_trae_login` 改写） |
+| 5 | 「登录完成」判定改为「无效→有效」跃迁：先取基线，仅在新跃迁时落库关窗，避免旧会话一开窗就被关掉 | `main.rs:645-677` 逻辑改写 |
+| 6 | `forget_qoder` 增加 `clear_all_browsing_data()`；凭据白名单加 `qoder-session` | `main.rs:517-521`、`credential_store.rs:15` |
+| 7 | `refresh_qoder` 分发：先试 Cookie 会话 → 失败回落 PAT 内存令牌 → 再失败显示缺失 | `main.rs:428-460` |
+| 8 | `connection_status.qoder` 改为「有 PAT 或有 Cookie 会话」 | `main.rs:491-503` |
+| 9 | 前端加「打开 Qoder 登录窗口」按钮 + `qoder-auth-complete` 事件，复用 `#login-trae` 那套 | `src/index.html:96-99`、`src/main.js:332-335`、`371-374` |
+| 10 | **不需要改动** | `capabilities/default.json`（不加 `remote`）、`tauri.conf.json` 的 CSP |
+
+#### 6.1.7 推进顺序（与原「先做 POC」计划不同）
+
+**先不要动 WebView。** 两条路线的同一个阻塞项是「没用真实账号核对过字段」，而 PAT 路线已写完、已有 fixture 单测，验证成本最低：
+
+1. 用现有 PAT 通道跑一次真实取数 → 确认接口 A 字段、`displayMode`、个人池／加购池口径。**这一步 0 新代码。**
+2. 只有用户明确不想维护 PAT 时，才抓接口 B 字段名，再按 6.1.6 实现。
+3. 任何情况下都不解密 Qoder 本机 `auth*.dat`、不复用 `mcp-router.json` 的 apiKey。
 
 ### 6.2 代码改动面（POC 通过后）
 
