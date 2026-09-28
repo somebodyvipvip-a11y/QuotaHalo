@@ -132,7 +132,7 @@ function formatCountdown(unixSeconds) {
 
 function formatMiniCountdown(unixSeconds) {
   const seconds = Math.max(0, Math.floor(unixSeconds - Date.now() / 1000));
-  if (seconds === 0) return "等待服务刷新额度";
+  if (seconds === 0) return "等待刷新";
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return hours > 0 ? `余 ${hours}h ${minutes}m` : `余 ${minutes}m`;
