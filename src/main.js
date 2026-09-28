@@ -7,6 +7,7 @@ const elements = {
   quotaContent: document.querySelector("#quota-content"),
   errorContent: document.querySelector("#error-content"),
   errorMessage: document.querySelector("#error-message"),
+  primaryRing: document.querySelector("#primary-ring"),
   primaryReset: document.querySelector("#primary-reset"),
   primaryRemaining: document.querySelector("#primary-remaining"),
   primaryProgress: document.querySelector("#primary-progress"),
@@ -15,11 +16,15 @@ const elements = {
   weeklyProgress: document.querySelector("#weekly-progress"),
   weeklyReset: document.querySelector("#weekly-reset"),
   miniContent: document.querySelector("#mini-content"),
+  miniRing: document.querySelector("#mini-ring"),
   miniRemaining: document.querySelector("#mini-remaining"),
   miniProgress: document.querySelector("#mini-ring-progress"),
   miniCountdown: document.querySelector("#mini-countdown"),
   miniReset: document.querySelector("#mini-reset"),
   exitCompact: document.querySelector("#exit-compact"),
+  minimize: document.querySelector("#minimize"),
+  closePanel: document.querySelector("#close-panel"),
+  miniClosePanel: document.querySelector("#mini-close-panel"),
   updatedAt: document.querySelector("#updated-at"),
   refresh: document.querySelector("#refresh"),
   settings: document.querySelector("#settings"),
@@ -90,6 +95,10 @@ function applyDisplayMode(compact, persist = true) {
   const enabled = Boolean(compact);
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
+  if (enabled) {
+    elements.settingsPanel.hidden = true;
+    elements.settings.setAttribute("aria-expanded", "false");
+  }
   void invoke("set_widget_mode", { minimal: enabled }).catch(() => {});
   if (persist) {
     try { localStorage.setItem(MODE_STORAGE_KEY, enabled ? "compact" : "full"); } catch { /* storage unavailable */ }
@@ -100,19 +109,16 @@ try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } c
 try { applyDisplayMode(localStorage.getItem(MODE_STORAGE_KEY) === "compact", false); } catch { applyDisplayMode(false, false); }
 
 function timezoneLabel() {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "本地时区";
-  if (zone === "Asia/Shanghai") return "北京时间 UTC+8";
-  const offset = new Intl.DateTimeFormat("en-US", { timeZoneName: "longOffset" })
-    .formatToParts(new Date())
-    .find((part) => part.type === "timeZoneName")?.value;
-  return `${zone}${offset ? ` ${offset.replace("GMT", "UTC")}` : ""}`;
+  const minutes = -new Date().getTimezoneOffset();
+  const hours = Math.floor(Math.abs(minutes) / 60);
+  const extraMinutes = Math.abs(minutes) % 60;
+  return `UTC${minutes >= 0 ? "+" : "-"}${hours}${extraMinutes ? `:${String(extraMinutes).padStart(2, "0")}` : ""}`;
 }
 
 function formatTime(unixSeconds, includeDate = false) {
-  const options = includeDate
-    ? { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }
-    : { hour: "2-digit", minute: "2-digit", hour12: false };
-  return new Intl.DateTimeFormat("zh-CN", options).format(new Date(unixSeconds * 1000));
+  const date = new Date(unixSeconds * 1000);
+  const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return includeDate ? `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${time}` : time;
 }
 
 function formatCountdown(unixSeconds) {
@@ -131,40 +137,37 @@ function formatMiniCountdown(unixSeconds) {
   return hours > 0 ? `余 ${hours}h ${minutes}m` : `余 ${minutes}m`;
 }
 
-function setWindow(target, quota, isWeekly = false) {
-  if (!quota) {
-    target.remaining.textContent = "未返回";
-    target.reset.textContent = "服务未返回该额度窗口";
-    if (target.progress) target.progress.style.width = "0%";
-    if (!isWeekly) {
-      elements.primaryCountdown.textContent = "无法计算倒计时";
-    }
-    return;
-  }
-  const remaining = Math.max(0, Math.min(100, 100 - quota.used_percent));
-  target.remaining.textContent = `剩余 ${Math.round(remaining)}%`;
-  if (target.progress) target.progress.style.width = `${remaining}%`;
-  target.reset.textContent = isWeekly
-    ? `重置于 ${formatTime(quota.resets_at, true)}`
-    : `${formatTime(quota.resets_at)} 重置`;
-  if (!isWeekly) {
-    elements.primaryCountdown.textContent = formatCountdown(quota.resets_at);
-  }
+function quotaRemaining(quota) {
+  if (!quota || typeof quota.used_percent !== "number" || !Number.isFinite(quota.used_percent)
+    || quota.used_percent < 0 || quota.used_percent > 100
+    || typeof quota.resets_at !== "number" || !Number.isFinite(quota.resets_at) || quota.resets_at <= 0) return null;
+  return 100 - quota.used_percent;
 }
 
-function setMiniWindow(quota) {
-  if (!quota) {
-    elements.miniRemaining.textContent = "—";
-    elements.miniProgress.style.strokeDashoffset = "100";
-    elements.miniCountdown.textContent = "服务未返回 5 小时额度";
-    elements.miniReset.textContent = "—";
-    return;
-  }
-  const remaining = Math.max(0, Math.min(100, 100 - quota.used_percent));
-  elements.miniRemaining.textContent = `${Math.round(remaining)}%`;
-  elements.miniProgress.style.strokeDashoffset = String(100 - remaining);
-  elements.miniCountdown.textContent = formatMiniCountdown(quota.resets_at);
-  elements.miniReset.textContent = `${formatTime(quota.resets_at)} 重置`;
+function setHalo(ring, progress, value, remaining) {
+  ring.dataset.status = remaining === null ? "unavailable" : remaining <= 10 ? "low" : "ready";
+  ring.setAttribute("aria-label", remaining === null ? "5 小时额度不可用" : `5 小时额度剩余 ${Math.round(remaining)}%`);
+  progress.style.strokeDashoffset = String(remaining === null ? 100 : 100 - remaining);
+  value.textContent = remaining === null ? "—" : `${Math.round(remaining)}%`;
+}
+
+function setPrimaryWindow(quota) {
+  const remaining = quotaRemaining(quota);
+  setHalo(elements.primaryRing, elements.primaryProgress, elements.primaryRemaining, remaining);
+  setHalo(elements.miniRing, elements.miniProgress, elements.miniRemaining, remaining);
+  elements.primaryCountdown.textContent = remaining === null ? "额度暂不可用" : formatCountdown(quota.resets_at);
+  elements.miniCountdown.textContent = remaining === null ? "额度暂不可用" : formatMiniCountdown(quota.resets_at);
+  elements.primaryReset.textContent = remaining === null ? "—" : `${formatTime(quota.resets_at)} 重置`;
+  elements.miniReset.textContent = elements.primaryReset.textContent;
+}
+
+function setWeeklyWindow(quota) {
+  const remaining = quotaRemaining(quota);
+  elements.weeklyRemaining.textContent = remaining === null ? "—" : `${Math.round(remaining)}%`;
+  elements.weeklyProgress.style.width = `${remaining ?? 0}%`;
+  elements.weeklyProgress.parentElement.setAttribute("aria-label", remaining === null ? "每周额度不可用" : `每周额度剩余 ${Math.round(remaining)}%`);
+  elements.weeklyReset.textContent = remaining === null ? "服务未返回每周额度" : `${formatTime(quota.resets_at, true)} 重置`;
+  elements.weeklyProgress.closest(".weekly-card").dataset.status = remaining === null ? "unavailable" : remaining <= 10 ? "low" : "ready";
 }
 
 function render() {
@@ -174,19 +177,11 @@ function render() {
   elements.errorContent.hidden = !failed;
   if (failed) {
     elements.errorMessage.textContent = snapshot.message || "无法读取 Codex 额度。";
-    setMiniWindow(null);
+    setPrimaryWindow(null);
     elements.miniCountdown.textContent = "Codex 暂时不可用";
   } else {
-    setWindow(
-      { remaining: elements.primaryRemaining, reset: elements.primaryReset, progress: elements.primaryProgress },
-      snapshot.primary,
-    );
-    setWindow(
-      { remaining: elements.weeklyRemaining, reset: elements.weeklyReset, progress: elements.weeklyProgress },
-      snapshot.weekly,
-      true,
-    );
-    setMiniWindow(snapshot.primary);
+    setPrimaryWindow(snapshot.primary);
+    setWeeklyWindow(snapshot.weekly);
   }
   renderUpdatedAt();
 }
@@ -201,10 +196,9 @@ function renderCredit(name) {
   const low = ready && !data.unlimited && typeof total === "number" && Number.isFinite(total) && total > 0 && remaining / total <= 0.1;
   view.row.dataset.status = low ? "low" : ready ? "ready" : "unavailable";
   view.value.textContent = !ready ? "—" : data.unlimited ? "不限量" : `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(remaining)} 积分`;
-  view.detail.textContent = ready
-    ? data.unlimited ? "企业额度" : data.updated_at ? `更新于 ${formatTime(data.updated_at)}` : "已更新"
-    : data.message || "暂时无法读取";
-  view.row.title = view.detail.textContent;
+  view.detail.hidden = ready;
+  view.detail.textContent = ready ? "" : data.message || "暂时无法读取";
+  view.row.title = ready ? "" : view.detail.textContent;
   renderUpdatedAt();
 }
 
@@ -338,6 +332,11 @@ elements.forgetQoder.addEventListener("click", () => { void forgetService("forge
 elements.forgetTrae.addEventListener("click", () => { void forgetService("forget_trae", "trae"); });
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
+elements.minimize.addEventListener("click", () => {
+  void appWindow.minimize().catch(() => { elements.updatedAt.textContent = "无法最小化窗口"; });
+});
+elements.closePanel.addEventListener("click", () => { void invoke("hide_panel"); });
+elements.miniClosePanel.addEventListener("click", () => { void invoke("hide_panel"); });
 document.querySelectorAll(".theme-choice").forEach((choice) => {
   choice.addEventListener("click", () => {
     applyTheme(choice.dataset.theme);
