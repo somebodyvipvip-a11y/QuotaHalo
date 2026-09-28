@@ -64,62 +64,67 @@ fn parse_qoder(value: &Value) -> Result<CreditSnapshot, &'static str> {
     Ok(CreditSnapshot::ready(remaining, Some(total), now_unix()))
 }
 
-fn collect_trae_items(
-    value: &Value,
-    items: &mut Vec<(f64, f64)>,
-    unlimited: &mut bool,
-) -> Result<(), &'static str> {
-    match value {
-        Value::Array(values) => {
-            for item in values {
-                collect_trae_items(item, items, unlimited)?;
-            }
-        }
-        Value::Object(map) => {
-            if let Some(limit_value) = map.get("credits_limit") {
-                let limit = number(limit_value).ok_or("TRAE 积分上限无效")?;
-                if limit == -1.0 {
-                    *unlimited = true;
-                } else {
-                    if limit < 0.0 {
-                        return Err("TRAE 积分上限无效");
-                    }
-                    let used = match map
-                        .get("usage")
-                        .and_then(|usage| usage.get("credits_amount"))
-                    {
-                        Some(value) => number(value).ok_or("TRAE 积分用量无效")?,
-                        None => 0.0,
-                    };
-                    if used < 0.0 {
-                        return Err("TRAE 积分用量无效");
-                    }
-                    items.push(((limit - used).max(0.0).round(), limit));
-                }
-            } else {
-                for child in map.values() {
-                    collect_trae_items(child, items, unlimited)?;
-                }
-            }
-        }
-        _ => {}
+fn value_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut node = value;
+    for key in path {
+        node = node.get(*key)?;
     }
-    Ok(())
+    Some(node).filter(|value| !value.is_null())
 }
 
+fn first_number<'a>(value: &'a Value, paths: &[&[&str]]) -> Option<f64> {
+    paths
+        .iter()
+        .find_map(|path| value_at(value, path))
+        .and_then(number)
+}
+
+const LIMIT_PATHS: &[&[&str]] = &[
+    &["entitlement_base_info", "quota", "credits_limit"],
+    &["quota", "credits_limit"],
+    &["credits_limit"],
+];
+const USAGE_PATHS: &[&[&str]] = &[
+    &["usage", "credits_amount"],
+    &["entitlement_base_info", "usage", "credits_amount"],
+];
+
 fn parse_trae(value: &Value) -> Result<CreditSnapshot, &'static str> {
-    let mut items = Vec::new();
-    let mut unlimited = false;
-    collect_trae_items(value, &mut items, &mut unlimited)?;
-    if unlimited {
-        return Ok(CreditSnapshot::unlimited(now_unix()));
+    let packs = value
+        .get("user_entitlement_pack_list")
+        .or_else(|| value.get("data").and_then(|data| data.get("user_entitlement_pack_list")))
+        .and_then(Value::as_array)
+        .filter(|packs| !packs.is_empty())
+        .ok_or("TRAE 未返回积分数据")?;
+    let mut remaining = 0.0;
+    let mut total = 0.0;
+    let mut credit_packs = 0;
+    for pack in packs {
+        // 订阅权限包（Solo 并行数等）没有 credits_limit，只发积分的包才计入。
+        let Some(limit) = first_number(pack, LIMIT_PATHS) else {
+            continue;
+        };
+        if limit == -1.0 {
+            return Ok(CreditSnapshot::unlimited(now_unix()));
+        }
+        if limit < 0.0 {
+            return Err("TRAE 积分上限无效");
+        }
+        // 未使用过的积分包不返回 usage，按已用 0 计。
+        let used = first_number(pack, USAGE_PATHS).unwrap_or(0.0);
+        if used < 0.0 {
+            return Err("TRAE 积分用量无效");
+        }
+        remaining += (limit - used).max(0.0);
+        total += limit;
+        credit_packs += 1;
     }
-    if items.is_empty() {
+    if credit_packs == 0 {
         return Err("TRAE 未返回积分数据");
     }
     Ok(CreditSnapshot::ready(
-        items.iter().map(|item| item.0).sum(),
-        Some(items.iter().map(|item| item.1).sum()),
+        (remaining * 100.0).round() / 100.0,
+        Some((total * 100.0).round() / 100.0),
         now_unix(),
     ))
 }
@@ -330,16 +335,49 @@ mod tests {
         assert!(parse_qoder(&json!({"displayMode":"enterprise","enterpriseUsage":{}})).is_err());
     }
 
-    #[test]
-    fn trae_sums_entitlements_and_preserves_unlimited() {
-        let value = json!({"data":{"entitlements":[{"product":{"credits_limit":2000,"usage":{"credits_amount":210.2}}},{"product":{"credits_limit":1000,"usage":{"credits_amount":120}}}]}});
-        assert_eq!(parse_trae(&value).unwrap().remaining, Some(2670.0));
-        assert!(
-            parse_trae(&json!({"data":[{"credits_limit":-1}]}))
-                .unwrap()
-                .unlimited
+    fn trae_pack(credits: Option<f64>, used: Option<f64>) -> Value {
+        let mut quota = serde_json::Map::new();
+        if let Some(credits) = credits {
+            quota.insert("credits_limit".into(), json!(credits));
+        }
+        quota.insert("enable_solo_agent".into(), json!(2));
+        let mut base = serde_json::Map::new();
+        base.insert("quota".into(), Value::Object(quota.clone()));
+        // 同一份上限会在 product_extra 里镜像出现，不能被重复累加。
+        base.insert(
+            "product_extra".into(),
+            json!({"package_extra": {"quota": quota}}),
         );
-        assert!(parse_trae(&json!({"data":{}})).is_err());
+        let mut pack = serde_json::Map::new();
+        pack.insert("entitlement_base_info".into(), Value::Object(base));
+        if let Some(used) = used {
+            pack.insert("usage".into(), json!({"credits_amount": used}));
+        }
+        Value::Object(pack)
+    }
+
+    #[test]
+    fn trae_sums_only_credit_packs_and_counts_missing_usage_as_zero() {
+        let value = json!({"user_entitlement_pack_list": [
+            trae_pack(None, None),                       // 订阅权限包，无积分
+            trae_pack(Some(500.0), Some(500.0)),         // 已用满
+            trae_pack(Some(150.0), Some(19.1204)),       // 部分使用
+            trae_pack(Some(150.0), None),                // 未使用，接口不返回 usage
+            {"entitlement_base_info":{"quota":{"credits_limit":"1200"}},"usage":{"credits_amount":"300.5"}}
+        ]});
+        let snapshot = parse_trae(&value).unwrap();
+        assert_eq!(snapshot.remaining, Some(1_180.38));
+        assert_eq!(snapshot.total, Some(2_000.0));
+    }
+
+    #[test]
+    fn trae_preserves_unlimited_and_rejects_pack_lists_without_credits() {
+        let unlimited = json!({"user_entitlement_pack_list": [trae_pack(Some(-1.0), None)]});
+        assert!(parse_trae(&unlimited).unwrap().unlimited);
+        let subscription_only = json!({"user_entitlement_pack_list": [trae_pack(None, None)]});
+        assert!(parse_trae(&subscription_only).is_err());
+        assert!(parse_trae(&json!({"user_entitlement_pack_list": []})).is_err());
+        assert!(parse_trae(&json!({"user_entitlement_pack_list": [{"status": 1}]})).is_err());
     }
 
     #[test]

@@ -562,6 +562,66 @@ fn save_trae_token(token: String) -> Result<(), String> {
     credential_store::write("trae-token", token.trim())
 }
 
+const TRAE_TOKEN_PROBE: &str =
+    "(()=>{try{return location.hostname==='www.trae.cn' ? localStorage.getItem('Cloud-IDE-Token')||'' : ''}catch{return ''}})()";
+
+async fn page_trae_token(window: &WebviewWindow) -> Option<String> {
+    use tokio::sync::mpsc;
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let _ = window.eval_with_callback(TRAE_TOKEN_PROBE, move |value| {
+        let _ = tx.send(value);
+    });
+    tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .ok()?
+        .and_then(|value| serde_json::from_str::<String>(&value).ok())
+        .filter(|token| !token.is_empty() && token.len() < 4096)
+}
+
+async fn page_trae_session(window: &WebviewWindow) -> Option<String> {
+    let window = window.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let url = "https://www.trae.cn/".parse().ok()?;
+        window
+            .cookies_for_url(url)
+            .ok()?
+            .into_iter()
+            .find(|cookie| cookie.name() == "X-Cloudide-Session")
+            .map(|cookie| cookie.value().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// 只有 TRAE 接口真的返回积分才认定登录成功，避免用残留或失效的 Token 覆盖可用凭据。
+async fn persist_trae_login(window: &WebviewWindow, token: &str) -> bool {
+    let session = page_trae_session(window).await;
+    let mut usable = external_credits::fetch_trae(token, "jwt", session.as_deref())
+        .await
+        .status
+        == "ready";
+    let mut token = token.to_owned();
+    if !usable {
+        if let Some(session) = session.as_deref() {
+            if let Ok(renewed) = external_credits::renew_trae_token(session).await {
+                usable = external_credits::fetch_trae(&renewed, "jwt", Some(session))
+                    .await
+                    .status
+                    == "ready";
+                token = renewed;
+            }
+        }
+    }
+    if !usable {
+        return false;
+    }
+    if let Some(session) = session.as_deref() {
+        let _ = credential_store::write("trae-session", session);
+    }
+    credential_store::write("trae-token", &token).is_ok()
+}
+
 #[tauri::command]
 async fn open_trae_login(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("trae-auth") {
@@ -583,44 +643,34 @@ async fn open_trae_login(app: AppHandle) -> Result<(), String> {
         let _ = main.hide();
     }
     tauri::async_runtime::spawn(async move {
-        use tokio::sync::mpsc;
+        // 这个 profile 会保留上次登录的 Token，首次读到的是残留值，不能当作本次登录成功。
+        let mut baseline: Option<String> = None;
         for _ in 0..180 {
             if !window.is_visible().unwrap_or(false) {
                 break;
             }
-            let (tx, mut rx) = mpsc::unbounded_channel();
-            let _ = window.eval_with_callback(
-                "(()=>{try{return location.hostname==='www.trae.cn' ? localStorage.getItem('Cloud-IDE-Token')||'' : ''}catch{return ''}})()",
-                move |value| { let _ = tx.send(value); },
-            );
-            if let Ok(Some(value)) = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
-                if let Ok(token) = serde_json::from_str::<String>(&value) {
-                    if !token.is_empty() && token.len() < 4096 {
-                        let cookie_window = window.clone();
-                        let session = tauri::async_runtime::spawn_blocking(move || {
-                            let url = "https://www.trae.cn/".parse().ok()?;
-                            cookie_window
-                                .cookies_for_url(url)
-                                .ok()?
-                                .into_iter()
-                                .find(|cookie| cookie.name() == "X-Cloudide-Session")
-                                .map(|cookie| cookie.value().to_string())
-                        })
-                        .await
-                        .ok()
-                        .flatten();
-                        if let Some(session) = session {
-                            let _ = credential_store::write("trae-session", &session);
-                        }
-                        if credential_store::write("trae-token", &token).is_ok() {
-                            let app = window.app_handle();
-                            let _ = app.emit("trae-auth-complete", ());
-                            let _ = window.close();
-                            show_panel(app);
-                            break;
-                        }
-                    }
+            let token = match page_trae_token(&window).await {
+                Some(token) => token,
+                None => {
+                    sleep(Duration::from_secs(2)).await;
+                    continue;
                 }
+            };
+            let changed = match &baseline {
+                None => {
+                    baseline = Some(token.clone());
+                    // 旧会话仍可用时顺手续期，但不关窗，保留用户换号登录的机会。
+                    let _ = persist_trae_login(&window, &token).await;
+                    false
+                }
+                Some(previous) => previous != &token,
+            };
+            if changed && persist_trae_login(&window, &token).await {
+                let app = window.app_handle();
+                let _ = app.emit("trae-auth-complete", ());
+                let _ = window.close();
+                show_panel(app);
+                break;
             }
             sleep(Duration::from_secs(2)).await;
         }
@@ -832,7 +882,7 @@ fn main() {
         })
         .on_window_event(|window, event| {
             #[cfg(target_os = "windows")]
-            if matches!(event, WindowEvent::Resized(_)) {
+            if window.label() == "main" && matches!(event, WindowEvent::Resized(_)) {
                 if let (Ok(hwnd), Ok(size), Ok(scale_factor)) =
                     (window.hwnd(), window.outer_size(), window.scale_factor())
                 {
