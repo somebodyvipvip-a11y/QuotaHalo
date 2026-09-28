@@ -51,6 +51,7 @@ const elements = {
 };
 
 let snapshot = null;
+let lastSuccessfulSnapshot = null;
 let refreshing = false;
 let codexRequestId = 0;
 const creditSnapshots = {};
@@ -145,47 +146,51 @@ function quotaRemaining(quota) {
   return 100 - quota.used_percent;
 }
 
-function setHalo(ring, progress, value, remaining, loading = false) {
-  ring.dataset.status = loading ? "loading" : remaining === null ? "unavailable" : remaining <= 10 ? "low" : "ready";
+function setHalo(ring, progress, value, remaining, state = "ready") {
+  ring.dataset.status = state === "loading" ? "loading" : remaining === null ? "unavailable" : remaining <= 10 ? "low" : "ready";
   if (remaining === null) {
     ring.removeAttribute("aria-valuenow");
-    ring.setAttribute("aria-valuetext", loading ? "正在读取" : "不可用");
+    ring.setAttribute("aria-valuetext", state === "loading" ? "正在读取" : state === "timeout" ? "读取超时" : "不可用");
   } else {
     ring.setAttribute("aria-valuenow", String(Math.round(remaining)));
-    ring.setAttribute("aria-valuetext", `${Math.round(remaining)}% 剩余`);
+    ring.setAttribute("aria-valuetext", `${Math.round(remaining)}% 剩余${state === "timeout" ? "，读取超时" : ""}`);
   }
   progress.style.strokeDashoffset = String(remaining === null ? 100 : 100 - remaining);
   value.textContent = remaining === null ? "—" : `${Math.round(remaining)}%`;
 }
 
-function setPrimaryWindow(quota, loading = false) {
+function setPrimaryWindow(quota, state = "ready") {
   const remaining = quotaRemaining(quota);
-  setHalo(elements.primaryRing, elements.primaryProgress, elements.primaryRemaining, remaining, loading);
-  setHalo(elements.miniRing, elements.miniProgress, elements.miniRemaining, remaining, loading);
-  elements.primaryCountdown.textContent = loading ? "正在读取" : remaining === null ? "额度暂不可用" : formatCountdown(quota.resets_at);
-  elements.miniCountdown.textContent = loading ? "正在读取" : remaining === null ? "不可用" : formatMiniCountdown(quota.resets_at);
+  setHalo(elements.primaryRing, elements.primaryProgress, elements.primaryRemaining, remaining, state);
+  setHalo(elements.miniRing, elements.miniProgress, elements.miniRemaining, remaining, state);
+  elements.primaryCountdown.textContent = state === "loading" ? "正在读取" : state === "timeout" ? "读取超时，请稍后重试" : remaining === null ? "额度暂不可用" : formatCountdown(quota.resets_at);
+  elements.miniCountdown.textContent = state === "loading" ? "正在读取" : state === "timeout" ? "读取超时" : remaining === null ? "不可用" : formatMiniCountdown(quota.resets_at);
   elements.primaryReset.textContent = remaining === null ? "—" : `${formatTime(quota.resets_at)} 重置`;
   elements.miniReset.textContent = elements.primaryReset.textContent;
 }
 
-function setWeeklyWindow(quota, loading = false) {
+function setWeeklyWindow(quota, state = "ready") {
   const remaining = quotaRemaining(quota);
   elements.weeklyRemaining.textContent = remaining === null ? "—" : `${Math.round(remaining)}%`;
   elements.weeklyProgress.style.width = `${remaining ?? 0}%`;
-  elements.weeklyProgress.parentElement.setAttribute("aria-label", loading ? "每周额度正在读取" : remaining === null ? "每周额度不可用" : `每周额度剩余 ${Math.round(remaining)}%`);
-  elements.weeklyReset.textContent = loading ? "正在读取" : remaining === null ? "服务未返回每周额度" : `${formatTime(quota.resets_at, true)} 重置`;
-  elements.weeklyProgress.closest(".weekly-card").dataset.status = loading ? "loading" : remaining === null ? "unavailable" : remaining <= 10 ? "low" : "ready";
+  elements.weeklyProgress.parentElement.setAttribute("aria-label", state === "loading" ? "每周额度正在读取" : state === "timeout" ? "每周额度读取超时" : remaining === null ? "每周额度不可用" : `每周额度剩余 ${Math.round(remaining)}%`);
+  elements.weeklyReset.textContent = state === "loading" ? "正在读取" : state === "timeout" ? "读取超时，显示上次数据" : remaining === null ? "服务未返回每周额度" : `${formatTime(quota.resets_at, true)} 重置`;
+  elements.weeklyProgress.closest(".weekly-card").dataset.status = state === "loading" ? "loading" : remaining === null ? "unavailable" : remaining <= 10 ? "low" : "ready";
 }
 
 function render() {
   if (!snapshot) return;
   const loading = snapshot.status === "loading";
   const failed = snapshot.status === "unavailable";
-  elements.quotaContent.hidden = failed;
-  elements.errorContent.hidden = !failed;
+  const timedOut = failed && /超时/.test(snapshot.message || "");
+  elements.quotaContent.hidden = failed && !timedOut;
+  elements.errorContent.hidden = !failed || timedOut;
   if (loading) {
-    setPrimaryWindow(null, true);
-    setWeeklyWindow(null, true);
+    setPrimaryWindow(lastSuccessfulSnapshot?.primary || null, "loading");
+    setWeeklyWindow(lastSuccessfulSnapshot?.weekly || null, "loading");
+  } else if (timedOut) {
+    setPrimaryWindow(lastSuccessfulSnapshot?.primary || null, "timeout");
+    setWeeklyWindow(lastSuccessfulSnapshot?.weekly || null, "timeout");
   } else if (failed) {
     elements.errorMessage.textContent = snapshot.message || "无法读取 Codex 额度。";
     setPrimaryWindow(null);
@@ -302,7 +307,10 @@ async function refreshCodex() {
         );
       }),
     ]);
-    if (requestId === codexRequestId) snapshot = result;
+    if (requestId === codexRequestId) {
+      snapshot = result;
+      if (result.status !== "unavailable") lastSuccessfulSnapshot = result;
+    }
   } catch {
     if (requestId === codexRequestId) snapshot = { status: "unavailable", message: "额度工具发生意外错误。", updated_at: null };
   } finally {
