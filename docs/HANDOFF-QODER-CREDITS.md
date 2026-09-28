@@ -110,8 +110,26 @@ base URL：OpenAPI `https://openapi.qoder.com.cn`，官网 `https://qoder.com.cn
 **关键推论：这条路线不能用接口 A。** `openapi.qoder.com.cn` 只认 `Authorization: Bearer`，跨站且拿不到 token，浏览器会话帮不上忙；必须走官网同源（Cookie 会话）的接口 B。
 
 其他候选（保留记录，暂不做）：
-- **手动粘贴 token**：已实现，重启丢失、有效期未知，作为兜底。
+- **手动粘贴 token**：已实现，**当前唯一可用路线**，细节见 §4.1。
 - **自建 device-code 登录**：应用内可见 `/api/v1/deviceToken/poll`、`/api/v1/deviceToken/refresh`、`/api/v1/jobToken/exchange|refresh`、`/api/v1/me/jobToken`，思路与 Codex 同构（自己一份凭据），但 client_id、PKCE、auth base URL 无公开文档，需逆向且随版本变。A 不成立时再考虑。
+
+### 4.1 PAT 从哪来（2026-09-28 核实）
+
+`connect_qoder`（`main.rs:506-514`）拿 PAT 先调 `POST openapi.qoder.com.cn/api/v1/jobToken/exchange`（body `{"personal_token": "<PAT>"}`）换 `jt-` 开头短期令牌，再用它调接口 A。**所以 PAT 的权限范围必须覆盖额度读取**，否则会出现「换 token 成功、取用量 403」。
+
+官方两处文档给出的入口名称不一致，实测两条路径都落到同一个 CN 站页面：
+
+| 来源 | 名称 | 链接 |
+| --- | --- | --- |
+| docs.qoder.com（新文档站） | Account → Integrations | `https://qoder.com/account/integrations` |
+| 阿里云帮助中心（Qoder CN 控制台） | 设置 → API 令牌 | `https://qoder.com.cn/account/integrations` |
+| docs.qoder.com `qoderwake/automated-tasks` | 个人设置 → 服务集成 | 同上 |
+
+实测证据：`https://qoder.com.cn/account/integrations` 未登录 302 → `https://qoder.com.cn/sso/login/aliyun?oauth_callback=https%3A%2F%2Fqoder.com.cn%2Faccount%2Fintegrations`，说明该路径在 CN 站真实存在且登录后原样回跳。PAT 前缀 `pt-`（阿里云帮助中心明确）。
+
+创建流程（官方原文照录：「登录 Qoder → 打开 Account → Integrations → 选择有效期和所需权限并创建 PAT → 立即复制生成的值；页面关闭后无法再次查看」）。
+
+**待验证**：有效期上限（第三方教程称「最多 1 年」，官方文档未写上限）、权限范围的可选值（官方只写「所需的权限」，未列举项名）。项目内 PAT 仅用于读本账号用量，创建时建议勾选全部可选范围，宁可先宽后收；若遇 403，把实际 scope 名补进本节。
 
 ---
 
