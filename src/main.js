@@ -188,11 +188,13 @@ function render() {
   const loading = snapshot.status === "loading";
   const failed = snapshot.status === "unavailable";
   const timedOut = failed && /超时/.test(snapshot.message || "");
+  const hasSuccessfulSnapshot = Boolean(lastSuccessfulSnapshot?.primary || lastSuccessfulSnapshot?.weekly);
   elements.quotaContent.hidden = failed && !timedOut;
   elements.errorContent.hidden = !failed || timedOut;
   if (loading) {
-    setPrimaryWindow(lastSuccessfulSnapshot?.primary || null, "loading");
-    setWeeklyWindow(lastSuccessfulSnapshot?.weekly || null, "loading");
+    const state = hasSuccessfulSnapshot ? "ready" : "loading";
+    setPrimaryWindow(lastSuccessfulSnapshot?.primary || null, state);
+    setWeeklyWindow(lastSuccessfulSnapshot?.weekly || null, state);
   } else if (timedOut) {
     setPrimaryWindow(lastSuccessfulSnapshot?.primary || null, "timeout");
     setWeeklyWindow(lastSuccessfulSnapshot?.weekly || null, "timeout");

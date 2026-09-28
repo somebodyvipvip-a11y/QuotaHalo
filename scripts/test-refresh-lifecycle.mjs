@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -10,6 +11,7 @@ class FakeElement {
     this.value = "";
     this.style = {};
     this.dataset = {};
+    this.parentElement = this;
     this.attributes = new Set();
     this.listeners = new Map();
     this.classes = new Set();
@@ -34,14 +36,19 @@ class FakeElement {
   removeAttribute(name) {
     this.attributes.delete(name);
   }
+
+  closest() {
+    return this;
+  }
 }
 
-async function runScenario(name, invoke, fireDeadline = false) {
+async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRetention = false) {
   const selectors = [
     "#timezone",
     "#quota-content",
     "#error-content",
     "#error-message",
+    "#primary-ring",
     "#primary-reset",
     "#primary-remaining",
     "#primary-progress",
@@ -50,14 +57,21 @@ async function runScenario(name, invoke, fireDeadline = false) {
     "#weekly-progress",
     "#weekly-reset",
     "#mini-content",
+    "#mini-ring",
     "#mini-remaining",
     "#mini-ring-progress",
     "#mini-countdown",
     "#mini-reset",
     "#exit-compact",
+    "#minimize",
+    "#close-panel",
+    "#mini-close-panel",
     "#updated-at",
     "#refresh",
     "#settings",
+    "#theme-toggle",
+    "#theme-options",
+    "#theme-current",
     "#compact-toggle",
     "#settings-panel",
     "#opacity",
@@ -87,10 +101,13 @@ async function runScenario(name, invoke, fireDeadline = false) {
   const elements = new Map(selectors.map((selector) => [selector, new FakeElement()]));
   elements.get("#settings-panel").hidden = true;
   elements.get("#mini-content").hidden = true;
+  elements.get("#theme-options").hidden = true;
   let deadlineCallback;
   let deadlineMs;
+  let quotaCalls = 0;
+  let resolveSecondQuota;
   const intervalMs = [];
-  const themeChoices = ["violet", "cyan", "indigo", "moss", "amber", "mono"].map((theme) => {
+  const themeChoices = ["violet", "blue", "mint", "amber"].map((theme) => {
     const choice = new FakeElement();
     choice.dataset.theme = theme;
     return choice;
@@ -124,7 +141,9 @@ async function runScenario(name, invoke, fireDeadline = false) {
           ? Promise.resolve(connected.qoder ? { status: "ready", remaining: 1280, total: 2000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请连接 Qoder 账号" })
           : command === "refresh_trae"
             ? Promise.resolve(connected.trae ? { status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请登录 TRAE 账号" })
-        : invoke(command, args) },
+        : command === "refresh_quota" && verifyRefreshRetention && quotaCalls++ > 0
+          ? new Promise((resolve) => { resolveSecondQuota = resolve; })
+          : invoke(command, args) },
       event: { listen: async () => {} },
       window: { getCurrentWindow: () => ({ startDragging: async () => {} }) },
     },
@@ -146,11 +165,27 @@ async function runScenario(name, invoke, fireDeadline = false) {
   await Promise.resolve();
   assert.ok(intervalMs.includes(180_000), `${name}: automatic refresh is not three minutes`);
   assert.equal(globalThis.document.body.dataset.theme, "", `${name}: violet should be the default skin`);
+  if (verifyRefreshRetention) {
+    elements.get("#refresh").listeners.get("click")();
+    await Promise.resolve();
+    assert.notEqual(elements.get("#primary-countdown").textContent, "正在读取", `${name}: refresh replaced the primary countdown with loading text`);
+    assert.notEqual(elements.get("#weekly-reset").textContent, "正在读取", `${name}: refresh replaced the weekly reset with loading text`);
+    resolveSecondQuota({
+      status: "ready",
+      updated_at: Math.floor(Date.now() / 1000),
+      primary: { used_percent: 30, window_duration_mins: 300, resets_at: 1_900_000_000 },
+      weekly: { used_percent: 45, window_duration_mins: 10_080, resets_at: 1_900_000_000 },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+  }
   elements.get("#settings").listeners.get("click")();
   assert.equal(elements.get("#settings-panel").hidden, false, `${name}: settings panel did not open`);
-  themeChoices.find((choice) => choice.dataset.theme === "cyan").listeners.get("click")();
-  assert.equal(globalThis.document.body.dataset.theme, "cyan", `${name}: selected skin was not applied`);
-  assert.equal(savedTheme, "cyan", `${name}: selected skin was not saved`);
+  elements.get("#theme-toggle").listeners.get("click")();
+  assert.equal(elements.get("#theme-options").hidden, false, `${name}: skin options did not open`);
+  themeChoices.find((choice) => choice.dataset.theme === "blue").listeners.get("click")();
+  assert.equal(globalThis.document.body.dataset.theme, "blue", `${name}: selected skin was not applied`);
+  assert.equal(savedTheme, "blue", `${name}: selected skin was not saved`);
+  assert.equal(elements.get("#theme-options").hidden, true, `${name}: skin options did not close after selection`);
   elements.get("#compact-toggle").listeners.get("click")();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode was not enabled`);
@@ -192,7 +227,16 @@ await runScenario(
     primary: { used_percent: 25, window_duration_mins: 300, resets_at: 1_900_000_000 },
     weekly: { used_percent: 40, window_duration_mins: 10_080, resets_at: 1_900_000_000 },
   }),
+  false,
+  true,
 );
+
+const styles = await readFile(resolve("src/styles.css"), "utf8");
+const markup = await readFile(resolve("src/index.html"), "utf8");
+assert.match(styles, /\.panel \{[^}]*border-radius:16px/);
+assert.match(styles, /\.halo-ring \{[^}]*flex: 0 0 104px/);
+assert.match(styles, /\.theme-choice\[data-theme="violet"\] i \{ background:#bc5cff/);
+assert.match(markup, /距离重置还剩/);
 
 const failed = await runScenario("rpc-error", async () => ({
   status: "unavailable",
@@ -202,5 +246,5 @@ const failed = await runScenario("rpc-error", async () => ({
 assert.match(failed.get("#error-message").textContent, /-32603/);
 
 const timedOut = await runScenario("timeout", () => new Promise(() => {}), true);
-assert.match(timedOut.get("#error-message").textContent, /50 秒/);
-console.log("Refresh lifecycle checks passed for success, RPC error, three-minute polling, and timeout.");
+assert.match(timedOut.get("#primary-countdown").textContent, /读取超时/);
+console.log("Refresh lifecycle checks passed for success, retained refresh data, RPC error, three-minute polling, and timeout.");
