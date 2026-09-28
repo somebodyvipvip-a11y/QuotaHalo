@@ -26,7 +26,7 @@ npm run dev
 .\scripts\build-bare-exe.ps1
 ```
 
-脚本会执行 release 构建，并输出 `dist/QuotaHalo-<version>.exe`；不会生成安装器。若 PowerShell 的执行策略阻止运行，可使用：
+脚本会执行锁定依赖的 release 构建，并输出 `dist/QuotaHalo-<version>.exe`；不会生成安装器，也不会在构建时改写 `Cargo.lock`。若 PowerShell 的执行策略阻止运行，可使用：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-bare-exe.ps1

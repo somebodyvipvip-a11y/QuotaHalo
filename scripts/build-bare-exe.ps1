@@ -19,7 +19,7 @@ if ([string]::IsNullOrWhiteSpace($version)) {
 }
 
 Write-Host "Building QuotaHalo $version portable EXE..."
-& cargo build --release --manifest-path $cargoManifest
+& cargo build --release --locked --manifest-path $cargoManifest
 if ($LASTEXITCODE -ne 0) {
     throw "Cargo build failed with exit code $LASTEXITCODE."
 }
