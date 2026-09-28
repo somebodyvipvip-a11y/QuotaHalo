@@ -24,7 +24,7 @@
 
       <section id="quota-content" class="quota-content" data-tauri-drag-region>
         <article class="quota-card primary-card">
-          <div class="quota-heading"><span class="quota-name">Codex · 5 小时额度</span><span class="quota-badge">主额度</span></div>
+          <div class="quota-heading"><span class="quota-name">Codex · 5 小时额度</span></div>
           <div class="primary-body">
             <div id="primary-ring" class="halo-ring" role="progressbar" aria-label="5 小时额度剩余" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未读取">
               <svg viewBox="0 0 120 120" aria-hidden="true">
@@ -118,13 +118,12 @@
         <p id="connection-message" class="connection-message" role="status"></p>
         <div class="appearance-divider"></div>
         <p class="settings-title">外观</p>
-        <div class="theme-grid">
-          <button class="theme-choice" type="button" data-theme="violet"><i></i>紫雾</button>
-          <button class="theme-choice" type="button" data-theme="cyan"><i></i>青蓝</button>
-          <button class="theme-choice" type="button" data-theme="indigo"><i></i>靛蓝</button>
-          <button class="theme-choice" type="button" data-theme="moss"><i></i>墨绿</button>
+        <button id="theme-toggle" class="appearance-toggle" type="button" aria-expanded="false" aria-controls="theme-options"><span>皮肤</span><span><output id="theme-current">紫晶</output><span class="appearance-chevron" aria-hidden="true">⌄</span></span></button>
+        <div id="theme-options" class="theme-grid" hidden>
+          <button class="theme-choice" type="button" data-theme="violet"><i></i>紫晶</button>
+          <button class="theme-choice" type="button" data-theme="blue"><i></i>湛蓝</button>
+          <button class="theme-choice" type="button" data-theme="mint"><i></i>青绿</button>
           <button class="theme-choice" type="button" data-theme="amber"><i></i>琥珀</button>
-          <button class="theme-choice" type="button" data-theme="mono"><i></i>灰阶</button>
         </div>
         <div class="appearance-divider"></div>
         <label class="opacity-setting" for="opacity">

@@ -28,6 +28,9 @@ const elements = {
   updatedAt: document.querySelector("#updated-at"),
   refresh: document.querySelector("#refresh"),
   settings: document.querySelector("#settings"),
+  themeToggle: document.querySelector("#theme-toggle"),
+  themeOptions: document.querySelector("#theme-options"),
+  themeCurrent: document.querySelector("#theme-current"),
   compactToggle: document.querySelector("#compact-toggle"),
   settingsPanel: document.querySelector("#settings-panel"),
   opacity: document.querySelector("#opacity"),
@@ -62,7 +65,8 @@ const REFRESH_DEADLINE_MS = 50_500;
 const THEME_STORAGE_KEY = "quota-halo-skin";
 const OPACITY_STORAGE_KEY = "quota-halo-opacity";
 const MODE_STORAGE_KEY = "quota-halo-display-mode";
-const THEMES = new Set(["violet", "cyan", "indigo", "moss", "amber", "mono"]);
+const THEME_LABELS = { violet: "紫晶", blue: "湛蓝", mint: "青绿", amber: "琥珀" };
+const THEMES = new Set(Object.keys(THEME_LABELS));
 
 function applyTheme(theme, persist = true) {
   const selected = THEMES.has(theme) ? theme : "violet";
@@ -70,6 +74,7 @@ function applyTheme(theme, persist = true) {
   document.querySelectorAll(".theme-choice").forEach((choice) => {
     choice.classList.toggle("is-active", choice.dataset.theme === selected);
   });
+  elements.themeCurrent.textContent = THEME_LABELS[selected];
   if (persist) {
     try { localStorage.setItem(THEME_STORAGE_KEY, selected); } catch { /* storage unavailable */ }
   }
@@ -347,6 +352,15 @@ elements.settings.addEventListener("click", () => {
   const open = elements.settingsPanel.hidden;
   elements.settingsPanel.hidden = !open;
   elements.settings.setAttribute("aria-expanded", String(open));
+  if (!open) {
+    elements.themeOptions.hidden = true;
+    elements.themeToggle.setAttribute("aria-expanded", "false");
+  }
+});
+elements.themeToggle.addEventListener("click", () => {
+  const open = elements.themeOptions.hidden;
+  elements.themeOptions.hidden = !open;
+  elements.themeToggle.setAttribute("aria-expanded", String(open));
 });
 elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
 elements.saveQoder.addEventListener("click", () => { void connectService("connect_qoder", (pat) => ({ pat }), elements.qoderToken, "Qoder"); });
@@ -368,8 +382,8 @@ elements.miniClosePanel.addEventListener("click", () => { void invoke("hide_pane
 document.querySelectorAll(".theme-choice").forEach((choice) => {
   choice.addEventListener("click", () => {
     applyTheme(choice.dataset.theme);
-    elements.settingsPanel.hidden = true;
-    elements.settings.setAttribute("aria-expanded", "false");
+    elements.themeOptions.hidden = true;
+    elements.themeToggle.setAttribute("aria-expanded", "false");
   });
 });
 elements.openUsage.addEventListener("click", async () => {
