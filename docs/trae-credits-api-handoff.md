@@ -94,6 +94,16 @@ return l === -1 ? -1 : Math.round(Math.max(l - Number(product?.usage?.credits_am
 
 结论：积分数值不落盘，必须实时调用 API；登录凭证存在加密 Cookie 中。
 
+> **2026-09-28 补充：全量扫描验证（回答「能否直接从本机读取」）**
+>
+> 对 `%APPDATA%\TRAE SOLO CN` 下的 `Local Storage`、`Session Storage`、`IndexedDB`、`WebStorage`、`shared_proto_db`、`blob_storage`、`Partitions`、`Network`、`Cookies` 做了全量字符串扫描，检索 `credits_limit` / `credits_amount` / `credits_balance` / `remaining_credits` / `is_credits_billing`，**除上述模式标记键外，没有任何积分数值**。
+>
+> 原因：数值只在页面内存（React Query 内存缓存）中短暂存在；积分接口是 `POST`，Chromium 不会把 POST 响应写入磁盘 HTTP 缓存。
+>
+> 另：本机 Chrome 的 Local Storage 中存在 `_https://www.trae.cn`、`_https://www.trae.ai` 数据（说明浏览器访问/登录过官网），但同样只记录 `trae-cn-credits-billing-status:v1:<userId>`，不含数值。
+>
+> **因此「纯读本机文件」拿不到剩余积分**，只有两条路：① 用登录凭证调用 API（方案 A/B/C）；② 用浏览器自动化打开官网「用量管理」页，直接读取页面上的积分数字（不改代码、不碰凭证，但依赖浏览器已登录）。
+
 ### 4.3 获取凭证的三种方案
 
 **方案 A：浏览器登录 trae.cn（推荐，改动最小）**
