@@ -140,7 +140,7 @@ body[data-mode="compact"] .settings-panel { display: none; }
 .workbuddy-mark { background: #28594d; }
 .trae-mark { background: #4b4276; }
 .qoder-mark { background: #6d5130; }
-.qoder-mark img { display:block; width:17px; height:17px; color:initial; }
+.qoder-mark::before { content:""; display:block; width:17px; height:17px; background:currentColor; mask:url("./qoder-color.svg") center/contain no-repeat; -webkit-mask:url("./qoder-color.svg") center/contain no-repeat; }
 .credential-line input,.credential-line select { background: #0b1020; }
 .credential-line button,.usage-button { border-color: var(--border); background: var(--glass-control); }
 .credential-line button:hover,.usage-button:hover { background: var(--accent); color: var(--surface); }

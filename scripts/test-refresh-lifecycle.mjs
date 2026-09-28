@@ -238,7 +238,7 @@ assert.match(styles, /\.settings-content:hover::-webkit-scrollbar-thumb \{ backg
 assert.match(styles, /\.halo-ring \{[^}]*flex: 0 0 104px/);
 assert.match(styles, /\.theme-choice\[data-theme="violet"\] i \{ background:#bc5cff/);
 assert.match(markup, /距离重置还剩/);
-assert.match(markup, /<img src="\.\/qoder-color\.svg" alt=""/);
+assert.match(styles, /\.qoder-mark::before \{[^}]*mask:url\("\.\/qoder-color\.svg"\)/);
 
 const failed = await runScenario("rpc-error", async () => ({
   status: "unavailable",
