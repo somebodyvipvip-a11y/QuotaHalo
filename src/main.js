@@ -133,7 +133,7 @@ function formatCountdown(unixSeconds) {
   if (seconds === 0) return "等待服务刷新额度";
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0 ? `还剩 ${hours} 小时 ${minutes} 分钟` : `还剩 ${minutes} 分钟`;
+  return hours > 0 ? `${hours} 小时 ${minutes} 分钟` : `${minutes} 分钟`;
 }
 
 function formatMiniCountdown(unixSeconds) {
@@ -377,10 +377,10 @@ elements.forgetTrae.addEventListener("click", () => { void forgetService("forget
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
 elements.minimize.addEventListener("click", () => {
-  void appWindow.minimize().catch(() => { elements.updatedAt.textContent = "无法最小化窗口"; });
+  void invoke("hide_panel");
 });
-elements.closePanel.addEventListener("click", () => { void invoke("hide_panel"); });
-elements.miniClosePanel.addEventListener("click", () => { void invoke("hide_panel"); });
+elements.closePanel.addEventListener("click", () => { void invoke("quit_app"); });
+elements.miniClosePanel.addEventListener("click", () => { void invoke("quit_app"); });
 document.querySelectorAll(".theme-choice").forEach((choice) => {
   choice.addEventListener("click", () => {
     applyTheme(choice.dataset.theme);

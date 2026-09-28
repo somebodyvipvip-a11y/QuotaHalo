@@ -737,11 +737,18 @@ fn hide_panel(window: WebviewWindow) {
 }
 
 #[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 fn set_widget_mode(minimal: bool, window: WebviewWindow) -> Result<(), String> {
+    // Pin the top-left corner: record the current position, resize, then restore.
+    let anchor = window.outer_position().unwrap_or_default();
     window
         .set_size(widget_size(minimal))
         .map_err(|_| "无法调整 QuotaHalo 窗口大小。")?;
-    position_panel(&window);
+    let _ = window.set_position(anchor);
     Ok(())
 }
 
@@ -815,7 +822,7 @@ fn apply_rounded_region(
 ) {
     use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
 
-    let diameter = ((22.0 * scale_factor).round() as i32 * 2).max(2);
+    let diameter = ((10.0 * scale_factor).round() as i32 * 2).max(2);
     let region =
         unsafe { CreateRoundRectRgn(0, 0, width as i32, height as i32, diameter, diameter) };
     if region.is_null() {
@@ -915,6 +922,7 @@ fn main() {
             save_trae_token,
             open_trae_login,
             hide_panel,
+            quit_app,
             set_widget_mode,
             set_window_opacity,
             open_usage_page
