@@ -104,32 +104,47 @@
           <button id="refresh" class="icon-button" type="button" aria-label="刷新额度" title="刷新额度"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 0-15.19-6.4L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.19 6.4L21 16"/><path d="M16 16h5v5"/></svg></button>
         </div>
       </footer>
-      <aside id="settings-panel" class="settings-panel" aria-label="连接与外观设置" hidden>
-        <p class="settings-title">连接服务</p>
-        <p class="settings-hint">登录信息保存在 Windows 凭据管理器，重启后自动恢复。</p>
-        <div class="connection-heading"><label class="credential-field" for="qoder-token">Qoder · 中国区 PAT</label><span id="qoder-connection">未连接</span></div>
-        <div class="credential-line"><input id="qoder-token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 pt- 开头的 PAT" /><button id="save-qoder" type="button">连接</button></div>
-        <button id="forget-qoder" class="forget-connection" type="button" hidden>忘记 Qoder 登录</button>
-        <div class="connection-heading"><span class="credential-field">TRAE</span><span id="trae-connection">未连接</span></div>
-        <div class="credential-line"><button id="login-trae" class="login-service" type="button">打开 TRAE 登录窗口</button></div>
-        <div class="credential-line"><input id="trae-secret" type="password" autocomplete="off" spellcheck="false" placeholder="或粘贴 Cloud-IDE-Token" /><button id="save-trae" type="button">连接</button></div>
-        <button id="forget-trae" class="forget-connection" type="button" hidden>忘记 TRAE 登录</button>
-        <p id="connection-message" class="connection-message" role="status"></p>
-        <div class="appearance-divider"></div>
-        <p class="settings-title">外观</p>
-        <button id="theme-toggle" class="appearance-toggle" type="button" aria-expanded="false" aria-controls="theme-options"><span>皮肤</span><span><output id="theme-current">紫晶</output><span class="appearance-chevron" aria-hidden="true">⌄</span></span></button>
-        <div id="theme-options" class="theme-grid" hidden>
-          <button class="theme-choice" type="button" data-theme="violet"><i></i>紫晶</button>
-          <button class="theme-choice" type="button" data-theme="blue"><i></i>湛蓝</button>
-          <button class="theme-choice" type="button" data-theme="mint"><i></i>青绿</button>
-          <button class="theme-choice" type="button" data-theme="amber"><i></i>琥珀</button>
+      <section id="settings-panel" class="settings-panel" aria-label="连接与外观设置" hidden>
+        <header class="settings-header" data-tauri-drag-region>
+          <button id="settings-back" class="icon-button" type="button" aria-label="返回额度概览" title="返回额度概览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/><path d="M9 12h11"/></svg></button>
+          <h2>设置</h2>
+          <span aria-hidden="true"></span>
+        </header>
+        <div class="settings-content">
+          <section class="settings-group" aria-labelledby="connection-title">
+            <div class="settings-group-heading"><div><h3 id="connection-title">连接服务</h3><p>登录信息仅保存在 Windows 凭据管理器。</p></div></div>
+            <article class="connection-card" data-connection="qoder">
+              <div class="connection-heading"><div><h4>Qoder</h4><p>中国区 PAT</p></div><span id="qoder-connection" class="connection-status">未连接</span></div>
+              <label class="credential-field" for="qoder-token">个人访问令牌</label>
+              <div class="credential-line"><input id="qoder-token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 pt- 开头的 PAT" /><button id="save-qoder" type="button">连接</button></div>
+              <p id="qoder-message" class="connection-message" role="status"></p>
+              <button id="forget-qoder" class="forget-connection" type="button" hidden>忘记此登录</button>
+            </article>
+            <article class="connection-card" data-connection="trae">
+              <div class="connection-heading"><div><h4>TRAE</h4><p>可网页登录或手动粘贴 Token</p></div><span id="trae-connection" class="connection-status">未连接</span></div>
+              <button id="login-trae" class="login-service" type="button">打开 TRAE 登录窗口</button>
+              <p class="connection-or">或使用已有凭据</p>
+              <label class="credential-field" for="trae-secret">Cloud-IDE-Token</label>
+              <div class="credential-line"><input id="trae-secret" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 Cloud-IDE-Token" /><button id="save-trae" type="button">连接</button></div>
+              <p id="trae-message" class="connection-message" role="status"></p>
+              <button id="forget-trae" class="forget-connection" type="button" hidden>忘记此登录</button>
+            </article>
+          </section>
+          <section class="settings-group" aria-labelledby="appearance-title">
+            <div class="settings-group-heading"><div><h3 id="appearance-title">外观</h3><p>选择皮肤与窗口透明度。</p></div></div>
+            <div class="appearance-card">
+              <span class="setting-label">皮肤</span>
+              <div id="theme-options" class="theme-grid">
+                <button class="theme-choice" type="button" data-theme="violet"><i></i>紫晶</button>
+                <button class="theme-choice" type="button" data-theme="blue"><i></i>湛蓝</button>
+                <button class="theme-choice" type="button" data-theme="mint"><i></i>青绿</button>
+                <button class="theme-choice" type="button" data-theme="amber"><i></i>琥珀</button>
+              </div>
+              <label class="opacity-setting" for="opacity"><span>透明度 <output id="opacity-value">100%</output></span><input id="opacity" type="range" min="60" max="100" step="5" value="100" /></label>
+            </div>
+          </section>
         </div>
-        <div class="appearance-divider"></div>
-        <label class="opacity-setting" for="opacity">
-          <span>透明度 <output id="opacity-value">100%</output></span>
-          <input id="opacity" type="range" min="60" max="100" step="5" value="100" />
-        </label>
-      </aside>
+      </section>
     </main>
     <script type="module" src="./main.js"></script>
   </body>

@@ -69,9 +69,8 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     "#updated-at",
     "#refresh",
     "#settings",
-    "#theme-toggle",
+    "#settings-back",
     "#theme-options",
-    "#theme-current",
     "#compact-toggle",
     "#settings-panel",
     "#opacity",
@@ -86,7 +85,8 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     "#forget-trae",
     "#qoder-connection",
     "#trae-connection",
-    "#connection-message",
+    "#qoder-message",
+    "#trae-message",
     "#workbuddy-remaining",
     "#workbuddy-detail",
     "#trae-remaining",
@@ -101,7 +101,6 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   const elements = new Map(selectors.map((selector) => [selector, new FakeElement()]));
   elements.get("#settings-panel").hidden = true;
   elements.get("#mini-content").hidden = true;
-  elements.get("#theme-options").hidden = true;
   let deadlineCallback;
   let deadlineMs;
   let quotaCalls = 0;
@@ -180,12 +179,11 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   }
   elements.get("#settings").listeners.get("click")();
   assert.equal(elements.get("#settings-panel").hidden, false, `${name}: settings panel did not open`);
-  elements.get("#theme-toggle").listeners.get("click")();
-  assert.equal(elements.get("#theme-options").hidden, false, `${name}: skin options did not open`);
   themeChoices.find((choice) => choice.dataset.theme === "blue").listeners.get("click")();
   assert.equal(globalThis.document.body.dataset.theme, "blue", `${name}: selected skin was not applied`);
   assert.equal(savedTheme, "blue", `${name}: selected skin was not saved`);
-  assert.equal(elements.get("#theme-options").hidden, true, `${name}: skin options did not close after selection`);
+  elements.get("#settings-back").listeners.get("click")();
+  assert.equal(elements.get("#settings-panel").hidden, true, `${name}: settings panel did not close after returning`);
   elements.get("#compact-toggle").listeners.get("click")();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode was not enabled`);
@@ -234,6 +232,8 @@ await runScenario(
 const styles = await readFile(resolve("src/styles.css"), "utf8");
 const markup = await readFile(resolve("src/index.html"), "utf8");
 assert.match(styles, /\.panel \{[^}]*border-radius:16px/);
+assert.match(styles, /\.panel \{[^}]*border:0/);
+assert.match(styles, /\.settings-panel \{ position:absolute; inset:0 0 42px/);
 assert.match(styles, /\.halo-ring \{[^}]*flex: 0 0 104px/);
 assert.match(styles, /\.theme-choice\[data-theme="violet"\] i \{ background:#bc5cff/);
 assert.match(markup, /距离重置还剩/);

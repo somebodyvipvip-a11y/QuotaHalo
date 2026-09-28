@@ -28,9 +28,7 @@ const elements = {
   updatedAt: document.querySelector("#updated-at"),
   refresh: document.querySelector("#refresh"),
   settings: document.querySelector("#settings"),
-  themeToggle: document.querySelector("#theme-toggle"),
-  themeOptions: document.querySelector("#theme-options"),
-  themeCurrent: document.querySelector("#theme-current"),
+  settingsBack: document.querySelector("#settings-back"),
   compactToggle: document.querySelector("#compact-toggle"),
   settingsPanel: document.querySelector("#settings-panel"),
   opacity: document.querySelector("#opacity"),
@@ -45,7 +43,10 @@ const elements = {
   forgetTrae: document.querySelector("#forget-trae"),
   qoderConnection: document.querySelector("#qoder-connection"),
   traeConnection: document.querySelector("#trae-connection"),
-  connectionMessage: document.querySelector("#connection-message"),
+  connectionMessages: {
+    qoder: document.querySelector("#qoder-message"),
+    trae: document.querySelector("#trae-message"),
+  },
   credits: Object.fromEntries(["workbuddy", "trae", "qoder"].map((name) => [name, {
     row: document.querySelector(`[data-service="${name}"]`),
     value: document.querySelector(`#${name}-remaining`),
@@ -56,6 +57,7 @@ const elements = {
 let snapshot = null;
 let lastSuccessfulSnapshot = null;
 let refreshing = false;
+let settingsViewOpen = false;
 let codexRequestId = 0;
 const creditSnapshots = {};
 const creditRequestIds = { workbuddy: 0, trae: 0, qoder: 0 };
@@ -74,7 +76,6 @@ function applyTheme(theme, persist = true) {
   document.querySelectorAll(".theme-choice").forEach((choice) => {
     choice.classList.toggle("is-active", choice.dataset.theme === selected);
   });
-  elements.themeCurrent.textContent = THEME_LABELS[selected];
   if (persist) {
     try { localStorage.setItem(THEME_STORAGE_KEY, selected); } catch { /* storage unavailable */ }
   }
@@ -103,13 +104,18 @@ function applyDisplayMode(compact, persist = true) {
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
   if (enabled) {
-    elements.settingsPanel.hidden = true;
-    elements.settings.setAttribute("aria-expanded", "false");
+    setSettingsView(false);
   }
   void invoke("set_widget_mode", { minimal: enabled }).catch(() => {});
   if (persist) {
     try { localStorage.setItem(MODE_STORAGE_KEY, enabled ? "compact" : "full"); } catch { /* storage unavailable */ }
   }
+}
+
+function setSettingsView(open) {
+  settingsViewOpen = Boolean(open);
+  elements.settingsPanel.hidden = !settingsViewOpen;
+  elements.settings.setAttribute("aria-expanded", String(settingsViewOpen));
 }
 
 try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
@@ -256,38 +262,50 @@ async function renderConnectionStatus() {
     elements.forgetQoder.hidden = !status.qoder;
     elements.forgetTrae.hidden = !status.trae;
   } catch {
-    elements.connectionMessage.textContent = "无法读取连接状态";
+    elements.connectionMessages.qoder.textContent = "无法读取连接状态";
+    elements.connectionMessages.trae.textContent = "无法读取连接状态";
   }
 }
 
 async function connectService(command, args, input, name) {
+  const key = name.toLowerCase();
+  const message = elements.connectionMessages[key];
+  const button = key === "qoder" ? elements.saveQoder : elements.saveTrae;
   const secret = input.value.trim();
   if (!secret) {
-    elements.connectionMessage.textContent = `请先填写 ${name} 凭据`;
+    message.textContent = `请先填写 ${name} 凭据`;
     return;
   }
-  elements.connectionMessage.textContent = `正在连接 ${name}…`;
+  button.disabled = true;
+  message.textContent = `正在连接 ${name}…`;
   try {
     await invoke(command, args(secret));
     input.value = "";
-    elements.connectionMessage.textContent = `${name} 已连接，重新打开软件仍会保持登录`;
+    message.textContent = `${name} 已连接，重新打开软件仍会保持登录`;
     await renderConnectionStatus();
-    void refreshCredit(name.toLowerCase());
+    void refreshCredit(key);
   } catch (error) {
-    elements.connectionMessage.textContent = typeof error === "string" ? error : `${name} 连接失败`;
+    message.textContent = typeof error === "string" ? error : `${name} 连接失败`;
+  } finally {
+    button.disabled = false;
   }
 }
 
 async function forgetService(command, name) {
+  const message = elements.connectionMessages[name];
+  const button = name === "qoder" ? elements.forgetQoder : elements.forgetTrae;
+  button.disabled = true;
   try {
     await invoke(command);
     creditRequestIds[name]++;
     creditSnapshots[name] = { status: "unavailable", message: "尚未连接" };
     renderCredit(name);
-    elements.connectionMessage.textContent = `${name === "qoder" ? "Qoder" : "TRAE"} 登录已清除`;
+    message.textContent = `${name === "qoder" ? "Qoder" : "TRAE"} 登录已清除`;
     await renderConnectionStatus();
   } catch {
-    elements.connectionMessage.textContent = "无法清除登录信息";
+    message.textContent = "无法清除登录信息";
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -351,26 +369,18 @@ setInterval(updateTimezone, 60_000);
 window.addEventListener("focus", updateTimezone);
 elements.refresh.addEventListener("click", refresh);
 elements.settings.addEventListener("click", () => {
-  const open = elements.settingsPanel.hidden;
-  elements.settingsPanel.hidden = !open;
-  elements.settings.setAttribute("aria-expanded", String(open));
-  if (!open) {
-    elements.themeOptions.hidden = true;
-    elements.themeToggle.setAttribute("aria-expanded", "false");
-  }
+  setSettingsView(!settingsViewOpen);
 });
-elements.themeToggle.addEventListener("click", () => {
-  const open = elements.themeOptions.hidden;
-  elements.themeOptions.hidden = !open;
-  elements.themeToggle.setAttribute("aria-expanded", String(open));
-});
+elements.settingsBack.addEventListener("click", () => setSettingsView(false));
 elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
 elements.saveQoder.addEventListener("click", () => { void connectService("connect_qoder", (pat) => ({ pat }), elements.qoderToken, "Qoder"); });
 elements.saveTrae.addEventListener("click", () => { void connectService("save_trae_token", (token) => ({ token }), elements.traeSecret, "TRAE"); });
 elements.loginTrae.addEventListener("click", async () => {
-  elements.connectionMessage.textContent = "请在 TRAE 登录窗口完成登录";
+  elements.loginTrae.disabled = true;
+  elements.connectionMessages.trae.textContent = "请在 TRAE 登录窗口完成登录";
   try { await invoke("open_trae_login"); }
-  catch { elements.connectionMessage.textContent = "无法打开 TRAE 登录窗口"; }
+  catch { elements.connectionMessages.trae.textContent = "无法打开 TRAE 登录窗口"; }
+  finally { elements.loginTrae.disabled = false; }
 });
 elements.forgetQoder.addEventListener("click", () => { void forgetService("forget_qoder", "qoder"); });
 elements.forgetTrae.addEventListener("click", () => { void forgetService("forget_trae", "trae"); });
@@ -384,8 +394,6 @@ elements.miniClosePanel.addEventListener("click", () => { void invoke("quit_app"
 document.querySelectorAll(".theme-choice").forEach((choice) => {
   choice.addEventListener("click", () => {
     applyTheme(choice.dataset.theme);
-    elements.themeOptions.hidden = true;
-    elements.themeToggle.setAttribute("aria-expanded", "false");
   });
 });
 elements.openUsage.addEventListener("click", async () => {
@@ -402,9 +410,8 @@ document.querySelector(".panel").addEventListener("mousedown", (event) => {
 });
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (!elements.settingsPanel.hidden) {
-    elements.settingsPanel.hidden = true;
-    elements.settings.setAttribute("aria-expanded", "false");
+  if (settingsViewOpen) {
+    setSettingsView(false);
   } else {
     void invoke("hide_panel");
   }
@@ -412,7 +419,7 @@ window.addEventListener("keydown", (event) => {
 
 await listen("quota-refresh-request", refresh);
 await listen("trae-auth-complete", () => {
-  elements.connectionMessage.textContent = "TRAE 已登录，重新打开软件仍会保持登录";
+  elements.connectionMessages.trae.textContent = "TRAE 已登录，重新打开软件仍会保持登录";
   void renderConnectionStatus();
   void refreshCredit("trae");
 });

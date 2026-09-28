@@ -36,6 +36,7 @@ const FULL_WINDOW_WIDTH: f64 = 330.0;
 const FULL_WINDOW_HEIGHT: f64 = 515.0;
 const COMPACT_WINDOW_WIDTH: f64 = 135.0;
 const COMPACT_WINDOW_HEIGHT: f64 = 60.0;
+const WINDOW_CORNER_RADIUS: f64 = 16.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -822,7 +823,7 @@ fn apply_rounded_region(
 ) {
     use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
 
-    let diameter = ((10.0 * scale_factor).round() as i32 * 2).max(2);
+    let diameter = ((WINDOW_CORNER_RADIUS * scale_factor).round() as i32 * 2).max(2);
     let region =
         unsafe { CreateRoundRectRgn(0, 0, width as i32, height as i32, diameter, diameter) };
     if region.is_null() {
