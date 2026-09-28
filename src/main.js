@@ -30,9 +30,14 @@ const elements = {
   openUsage: document.querySelector("#open-usage"),
   qoderToken: document.querySelector("#qoder-token"),
   traeSecret: document.querySelector("#trae-secret"),
-  traeAuthMode: document.querySelector("#trae-auth-mode"),
   saveQoder: document.querySelector("#save-qoder"),
   saveTrae: document.querySelector("#save-trae"),
+  loginTrae: document.querySelector("#login-trae"),
+  forgetQoder: document.querySelector("#forget-qoder"),
+  forgetTrae: document.querySelector("#forget-trae"),
+  qoderConnection: document.querySelector("#qoder-connection"),
+  traeConnection: document.querySelector("#trae-connection"),
+  connectionMessage: document.querySelector("#connection-message"),
   credits: Object.fromEntries(["workbuddy", "trae", "qoder"].map((name) => [name, {
     row: document.querySelector(`[data-service="${name}"]`),
     value: document.querySelector(`#${name}-remaining`),
@@ -43,7 +48,6 @@ const elements = {
 let snapshot = null;
 let refreshing = false;
 const creditSnapshots = {};
-const credentials = { qoder: "", trae: "", traeMode: "bearer" };
 const creditRequestIds = { workbuddy: 0, trae: 0, qoder: 0 };
 const AUTO_REFRESH_INTERVAL_MS = 180_000;
 const CREDIT_REFRESH_INTERVAL_MS = 300_000;
@@ -211,30 +215,11 @@ function renderUpdatedAt() {
 
 async function refreshCredit(name) {
   const requestId = ++creditRequestIds[name];
-  let command;
-  let args;
-  if (name === "workbuddy") command = "refresh_workbuddy";
-  else if (name === "qoder") {
-    if (!credentials.qoder) {
-      creditSnapshots.qoder = { status: "unavailable", message: "请在设置中配置凭证" };
-      renderCredit(name);
-      return;
-    }
-    command = "refresh_qoder";
-    args = { token: credentials.qoder };
-  } else {
-    if (!credentials.trae) {
-      creditSnapshots.trae = { status: "unavailable", message: "请在设置中配置凭证" };
-      renderCredit(name);
-      return;
-    }
-    command = "refresh_trae";
-    args = { secret: credentials.trae, authMode: credentials.traeMode };
-  }
+  const command = name === "workbuddy" ? "refresh_workbuddy" : name === "qoder" ? "refresh_qoder" : "refresh_trae";
   creditSnapshots[name] = { status: "loading", message: "正在读取" };
   renderCredit(name);
   try {
-    const result = await invoke(command, args);
+    const result = await invoke(command);
     if (requestId !== creditRequestIds[name]) return;
     creditSnapshots[name] = result;
   } catch {
@@ -242,6 +227,52 @@ async function refreshCredit(name) {
     creditSnapshots[name] = { status: "unavailable", message: "读取失败，请稍后重试" };
   }
   renderCredit(name);
+  if (name !== "workbuddy") void renderConnectionStatus();
+}
+
+async function renderConnectionStatus() {
+  try {
+    const status = await invoke("connection_status");
+    const qoderExpired = /过期|无效/.test(creditSnapshots.qoder?.message || "");
+    const traeExpired = /过期|重新登录/.test(creditSnapshots.trae?.message || "");
+    elements.qoderConnection.textContent = status.qoder ? qoderExpired ? "需重新连接" : "已连接" : "未连接";
+    elements.traeConnection.textContent = status.trae ? traeExpired ? "需重新登录" : "已连接" : "未连接";
+    elements.forgetQoder.hidden = !status.qoder;
+    elements.forgetTrae.hidden = !status.trae;
+  } catch {
+    elements.connectionMessage.textContent = "无法读取连接状态";
+  }
+}
+
+async function connectService(command, args, input, name) {
+  const secret = input.value.trim();
+  if (!secret) {
+    elements.connectionMessage.textContent = `请先填写 ${name} 凭据`;
+    return;
+  }
+  elements.connectionMessage.textContent = `正在连接 ${name}…`;
+  try {
+    await invoke(command, args(secret));
+    input.value = "";
+    elements.connectionMessage.textContent = `${name} 已连接，重新打开软件仍会保持登录`;
+    await renderConnectionStatus();
+    void refreshCredit(name.toLowerCase());
+  } catch (error) {
+    elements.connectionMessage.textContent = typeof error === "string" ? error : `${name} 连接失败`;
+  }
+}
+
+async function forgetService(command, name) {
+  try {
+    await invoke(command);
+    creditRequestIds[name]++;
+    creditSnapshots[name] = { status: "unavailable", message: "尚未连接" };
+    renderCredit(name);
+    elements.connectionMessage.textContent = `${name === "qoder" ? "Qoder" : "TRAE"} 登录已清除`;
+    await renderConnectionStatus();
+  } catch {
+    elements.connectionMessage.textContent = "无法清除登录信息";
+  }
 }
 
 async function refreshCredits() {
@@ -296,17 +327,15 @@ elements.settings.addEventListener("click", () => {
   elements.settings.setAttribute("aria-expanded", String(open));
 });
 elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
-elements.saveQoder.addEventListener("click", () => {
-  credentials.qoder = elements.qoderToken.value.trim();
-  elements.qoderToken.value = "";
-  void refreshCredit("qoder");
+elements.saveQoder.addEventListener("click", () => { void connectService("connect_qoder", (pat) => ({ pat }), elements.qoderToken, "Qoder"); });
+elements.saveTrae.addEventListener("click", () => { void connectService("save_trae_token", (token) => ({ token }), elements.traeSecret, "TRAE"); });
+elements.loginTrae.addEventListener("click", async () => {
+  elements.connectionMessage.textContent = "请在 TRAE 登录窗口完成登录";
+  try { await invoke("open_trae_login"); }
+  catch { elements.connectionMessage.textContent = "无法打开 TRAE 登录窗口"; }
 });
-elements.saveTrae.addEventListener("click", () => {
-  credentials.trae = elements.traeSecret.value.trim();
-  credentials.traeMode = elements.traeAuthMode.value;
-  elements.traeSecret.value = "";
-  void refreshCredit("trae");
-});
+elements.forgetQoder.addEventListener("click", () => { void forgetService("forget_qoder", "qoder"); });
+elements.forgetTrae.addEventListener("click", () => { void forgetService("forget_trae", "trae"); });
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
 document.querySelectorAll(".theme-choice").forEach((choice) => {
@@ -339,9 +368,15 @@ window.addEventListener("keydown", (event) => {
 });
 
 await listen("quota-refresh-request", refresh);
+await listen("trae-auth-complete", () => {
+  elements.connectionMessage.textContent = "TRAE 已登录，重新打开软件仍会保持登录";
+  void renderConnectionStatus();
+  void refreshCredit("trae");
+});
 setInterval(() => {
   if (snapshot?.primary) render();
 }, 1000);
 setInterval(() => { void refreshCodex(); }, AUTO_REFRESH_INTERVAL_MS);
 setInterval(() => { void refreshCredits(); }, CREDIT_REFRESH_INTERVAL_MS);
+void renderConnectionStatus();
 refresh();

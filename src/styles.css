@@ -54,5 +54,13 @@ body[data-mode="compact"] .panel-header,body[data-mode="compact"] .quota-content
 .credential-line input:focus-visible, .credential-line select:focus-visible { border-color: var(--accent); outline: 1px solid var(--accent); }
 .credential-line button { padding: 0 9px; border: 1px solid rgba(169, 209, 255, .24); border-radius: 7px; background: rgba(74, 156, 250, .16); color: var(--accent-strong); font-size: 10px; cursor: pointer; }
 .credential-line button:hover { background: rgba(74, 156, 250, .28); }
+.panel-header { position: relative; z-index: 1; min-height: 59px; background: linear-gradient(135deg, #101e33 0%, #0b182c 100%); border-bottom-color: rgba(188, 214, 248, .14); }
+.connection-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.connection-heading > span:last-child { color: var(--secondary); font-size: 10px; }
+.connection-heading .credential-field { margin: 0; }
+.credential-line .login-service { width: 100%; height: 30px; }
+.forget-connection { margin-top: 5px; padding: 4px 0; border: 0; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
+.forget-connection:hover { color: var(--accent-strong); }
+.connection-message { min-height: 14px; margin: 8px 0 0; color: var(--secondary); font-size: 10px; line-height: 1.4; }
 body[data-mode="compact"] .credits-content { display: none; }
 body[data-mode="compact"] .error-content { display: none; }

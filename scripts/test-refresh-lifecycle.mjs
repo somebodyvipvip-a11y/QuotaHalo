@@ -65,9 +65,14 @@ async function runScenario(name, invoke, fireDeadline = false) {
     "#open-usage",
     "#qoder-token",
     "#trae-secret",
-    "#trae-auth-mode",
     "#save-qoder",
     "#save-trae",
+    "#login-trae",
+    "#forget-qoder",
+    "#forget-trae",
+    "#qoder-connection",
+    "#trae-connection",
+    "#connection-message",
     "#workbuddy-remaining",
     "#workbuddy-detail",
     "#trae-remaining",
@@ -99,15 +104,26 @@ async function runScenario(name, invoke, fireDeadline = false) {
     },
   };
   let savedTheme;
+  const connected = { qoder: false, trae: false };
   globalThis.localStorage = { getItem: () => null, setItem: (_key, value) => { savedTheme = value; } };
   globalThis.window = {
     __TAURI__: {
-      core: { invoke: (command, args) => command === "refresh_workbuddy"
+      core: { invoke: (command, args) => command === "connection_status"
+        ? Promise.resolve({ ...connected })
+        : command === "connect_qoder"
+          ? (connected.qoder = true, Promise.resolve())
+          : command === "save_trae_token"
+            ? (connected.trae = true, Promise.resolve())
+            : command === "forget_qoder"
+              ? (connected.qoder = false, Promise.resolve())
+              : command === "forget_trae"
+                ? (connected.trae = false, Promise.resolve())
+                : command === "refresh_workbuddy"
         ? Promise.resolve({ status: "ready", remaining: 2450.5, total: 3000, updated_at: 1_900_000_000 })
         : command === "refresh_qoder"
-          ? Promise.resolve({ status: "ready", remaining: 1280, total: 2000, updated_at: 1_900_000_000 })
+          ? Promise.resolve(connected.qoder ? { status: "ready", remaining: 1280, total: 2000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请连接 Qoder 账号" })
           : command === "refresh_trae"
-            ? Promise.resolve({ status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 })
+            ? Promise.resolve(connected.trae ? { status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请登录 TRAE 账号" })
         : invoke(command, args) },
       event: { listen: async () => {} },
       window: { getCurrentWindow: () => ({ startDragging: async () => {} }) },
@@ -156,10 +172,9 @@ async function runScenario(name, invoke, fireDeadline = false) {
   assert.equal(refresh.attributes.has("aria-busy"), false, `${name}: busy state remains`);
   assert.equal(elements.get("#workbuddy-remaining").textContent, "2,450.5 积分");
   assert.equal(elements.get("#qoder-remaining").textContent, "—");
-  elements.get("#qoder-token").value = "test-token";
+  elements.get("#qoder-token").value = "pt-test-token";
   elements.get("#save-qoder").listeners.get("click")();
   elements.get("#trae-secret").value = "test-secret";
-  elements.get("#trae-auth-mode").value = "bearer";
   elements.get("#save-trae").listeners.get("click")();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(elements.get("#qoder-token").value, "", `${name}: Qoder credential remained in input`);

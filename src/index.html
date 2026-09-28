@@ -87,13 +87,17 @@
           <button id="refresh" class="icon-button" type="button" aria-label="刷新额度" title="刷新额度"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 0-15.19-6.4L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.19 6.4L21 16"/><path d="M16 16h5v5"/></svg></button>
         </div>
       </footer>
-      <aside id="settings-panel" class="settings-panel" aria-label="外观设置" hidden>
+      <aside id="settings-panel" class="settings-panel" aria-label="连接与外观设置" hidden>
         <p class="settings-title">连接服务</p>
-        <p class="settings-hint">凭证仅保留至本次退出，重新打开需再次填写。</p>
-        <label class="credential-field" for="qoder-token">Qoder Access Token</label>
-        <div class="credential-line"><input id="qoder-token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 token" /><button id="save-qoder" type="button">应用</button></div>
-        <label class="credential-field" for="trae-secret">TRAE 登录凭证</label>
-        <div class="credential-line"><select id="trae-auth-mode" aria-label="TRAE 凭证类型"><option value="bearer">Bearer Token</option><option value="cloudide">Cloudide Token</option><option value="cookie">Cookie</option></select><input id="trae-secret" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴凭证" /><button id="save-trae" type="button">应用</button></div>
+        <p class="settings-hint">登录信息保存在 Windows 凭据管理器，重启后自动恢复。</p>
+        <div class="connection-heading"><label class="credential-field" for="qoder-token">Qoder · 中国区 PAT</label><span id="qoder-connection">未连接</span></div>
+        <div class="credential-line"><input id="qoder-token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 pt- 开头的 PAT" /><button id="save-qoder" type="button">连接</button></div>
+        <button id="forget-qoder" class="forget-connection" type="button" hidden>忘记 Qoder 登录</button>
+        <div class="connection-heading"><span class="credential-field">TRAE</span><span id="trae-connection">未连接</span></div>
+        <div class="credential-line"><button id="login-trae" class="login-service" type="button">打开 TRAE 登录窗口</button></div>
+        <div class="credential-line"><input id="trae-secret" type="password" autocomplete="off" spellcheck="false" placeholder="或粘贴 Cloud-IDE-Token" /><button id="save-trae" type="button">连接</button></div>
+        <button id="forget-trae" class="forget-connection" type="button" hidden>忘记 TRAE 登录</button>
+        <p id="connection-message" class="connection-message" role="status"></p>
         <div class="appearance-divider"></div>
         <p class="settings-title">外观</p>
         <div class="theme-grid">

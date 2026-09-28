@@ -13,7 +13,9 @@ use crate::{
 };
 
 const QODER_URL: &str = "https://openapi.qoder.com.cn/sash/api/v2/me/usage";
+const QODER_EXCHANGE_URL: &str = "https://openapi.qoder.com.cn/api/v1/jobToken/exchange";
 const TRAE_URL: &str = "https://api.trae.com.cn/trae/api/v2/pay/user_current_entitlement_list";
+const TRAE_RENEW_URL: &str = "https://api.trae.cn/cloudide/api/v3/common/GetUserToken";
 
 fn qoder_pool(value: Option<&Value>) -> Result<Option<(f64, f64)>, &'static str> {
     let Some(pool) = value.filter(|value| !value.is_null()) else {
@@ -191,17 +193,75 @@ pub async fn fetch_qoder(token: &str) -> CreditSnapshot {
     CreditSnapshot::missing("Qoder 暂时无法读取积分")
 }
 
-pub async fn fetch_trae(secret: &str, auth_mode: &str) -> CreditSnapshot {
+pub async fn exchange_qoder_pat(pat: &str) -> Result<String, &'static str> {
+    if !pat.starts_with("pt-") {
+        return Err("请填写 Qoder PAT（pt- 开头）");
+    }
+    let client = client()?;
+    let response = client
+        .post(QODER_EXCHANGE_URL)
+        .header(ACCEPT, "application/json")
+        .json(&json!({"personal_token": pat}))
+        .send()
+        .await
+        .map_err(|_| "Qoder 登录服务暂时不可用")?;
+    if !response.status().is_success() {
+        return Err("Qoder PAT 无效或已过期");
+    }
+    let value = response
+        .json::<Value>()
+        .await
+        .map_err(|_| "Qoder 登录响应无法解析")?;
+    value
+        .get("token")
+        .or_else(|| value.get("accessToken"))
+        .and_then(Value::as_str)
+        .filter(|token| token.starts_with("jt-"))
+        .map(str::to_owned)
+        .ok_or("Qoder 未返回有效的登录令牌")
+}
+
+pub async fn renew_trae_token(session: &str) -> Result<String, &'static str> {
+    if session.trim().is_empty() {
+        return Err("TRAE 登录会话缺失");
+    }
+    let client = client()?;
+    let response = client
+        .post(TRAE_RENEW_URL)
+        .header("Cookie", format!("X-Cloudide-Session={session}"))
+        .header("Origin", "https://www.trae.cn")
+        .header("Referer", "https://www.trae.cn/")
+        .send()
+        .await
+        .map_err(|_| "TRAE 登录服务暂时不可用")?;
+    if !response.status().is_success() {
+        return Err("TRAE 登录已过期，请重新登录");
+    }
+    let value = response
+        .json::<Value>()
+        .await
+        .map_err(|_| "TRAE 登录响应无法解析")?;
+    value
+        .get("Result")
+        .and_then(|result| result.get("Token"))
+        .and_then(Value::as_str)
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned)
+        .ok_or("TRAE 登录已过期，请重新登录")
+}
+
+pub async fn fetch_trae(secret: &str, auth_mode: &str, session: Option<&str>) -> CreditSnapshot {
     let secret = match auth_mode {
         "bearer" => credential_value(credential_value(secret, "Authorization:"), "Bearer "),
         "cloudide" => credential_value(secret, "X-Cloudide-Token:"),
+        "jwt" => credential_value(secret, "Cloud-IDE-JWT "),
         "cookie" => credential_value(secret, "Cookie:"),
         _ => secret.trim(),
     };
     if secret.is_empty() {
         return CreditSnapshot::missing("请配置 TRAE 登录凭证");
     }
-    if !matches!(auth_mode, "bearer" | "cloudide" | "cookie") {
+    if !matches!(auth_mode, "bearer" | "cloudide" | "cookie" | "jwt") {
         return CreditSnapshot::missing("TRAE 凭证类型无效");
     }
     let Ok(client) = client() else {
@@ -212,12 +272,22 @@ pub async fn fetch_trae(secret: &str, auth_mode: &str) -> CreditSnapshot {
             .post(TRAE_URL)
             .header(ACCEPT, "application/json")
             .header(CONTENT_TYPE, "application/json")
+            .header("X-User-Region", "cn")
             .json(&json!({"require_usage":true,"full_data":true,"Request":{}}));
         request = match auth_mode {
             "bearer" => request.header(AUTHORIZATION, format!("Bearer {secret}")),
             "cloudide" => request.header("X-Cloudide-Token", secret),
+            "jwt" => request
+                .header(AUTHORIZATION, format!("Cloud-IDE-JWT {secret}"))
+                .header("Origin", "https://www.trae.cn")
+                .header("Referer", "https://www.trae.cn/"),
             _ => request.header("Cookie", secret),
         };
+        if auth_mode == "jwt" {
+            if let Some(session) = session {
+                request = request.header("Cookie", format!("X-Cloudide-Session={session}"));
+            }
+        }
         match request.send().await {
             Ok(response)
                 if matches!(

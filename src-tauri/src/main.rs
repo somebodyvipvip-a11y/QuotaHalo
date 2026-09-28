@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod credential_store;
 mod external_credits;
 mod services;
 mod workbuddy_credits;
@@ -10,7 +11,7 @@ use std::{
     ffi::OsString,
     fmt, fs,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,8 @@ use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -107,6 +109,9 @@ struct AppServerSession {
 struct AppServerClient {
     session: Mutex<Option<AppServerSession>>,
 }
+
+#[derive(Default)]
+struct QoderTokenCache(Mutex<Option<(String, Instant)>>);
 
 impl QuotaSnapshot {
     fn unavailable(message: impl Into<String>) -> Self {
@@ -420,13 +425,207 @@ async fn refresh_workbuddy() -> services::CreditSnapshot {
 }
 
 #[tauri::command]
-async fn refresh_qoder(token: String) -> services::CreditSnapshot {
-    external_credits::fetch_qoder(&token).await
+async fn refresh_qoder(
+    cache: State<'_, QoderTokenCache>,
+) -> Result<services::CreditSnapshot, String> {
+    let Ok(Some(pat)) = credential_store::read("qoder-pat") else {
+        return Ok(services::CreditSnapshot::missing("请连接 Qoder 账号"));
+    };
+    let cached = cache
+        .0
+        .lock()
+        .await
+        .as_ref()
+        .filter(|(_, created)| created.elapsed() < Duration::from_secs(20 * 3600))
+        .map(|(token, _)| token.clone());
+    let token = match cached {
+        Some(token) => token,
+        None => match external_credits::exchange_qoder_pat(&pat).await {
+            Ok(token) => {
+                *cache.0.lock().await = Some((token.clone(), Instant::now()));
+                token
+            }
+            Err(message) => return Ok(services::CreditSnapshot::missing(message)),
+        },
+    };
+    let result = external_credits::fetch_qoder(&token).await;
+    if result.message == Some("Qoder 登录凭证已过期") {
+        *cache.0.lock().await = None;
+        if let Ok(fresh) = external_credits::exchange_qoder_pat(&pat).await {
+            *cache.0.lock().await = Some((fresh.clone(), Instant::now()));
+            return Ok(external_credits::fetch_qoder(&fresh).await);
+        }
+    }
+    Ok(result)
 }
 
 #[tauri::command]
-async fn refresh_trae(secret: String, auth_mode: String) -> services::CreditSnapshot {
-    external_credits::fetch_trae(&secret, &auth_mode).await
+async fn refresh_trae() -> services::CreditSnapshot {
+    let session = credential_store::read("trae-session").ok().flatten();
+    let token = credential_store::read("trae-token").ok().flatten();
+    if let Some(token) = token {
+        let result = external_credits::fetch_trae(&token, "jwt", session.as_deref()).await;
+        if result.status == "ready" || result.message != Some("TRAE 登录凭证已过期") {
+            return result;
+        }
+    }
+    let Some(session) = session else {
+        return services::CreditSnapshot::missing("请登录 TRAE 账号");
+    };
+    match external_credits::renew_trae_token(&session).await {
+        Ok(token) => {
+            let _ = credential_store::write("trae-token", &token);
+            external_credits::fetch_trae(&token, "jwt", Some(&session)).await
+        }
+        Err(message) => services::CreditSnapshot::missing(message),
+    }
+}
+
+#[derive(Serialize)]
+struct ConnectionStatus {
+    qoder: bool,
+    trae: bool,
+}
+
+#[tauri::command]
+fn connection_status() -> ConnectionStatus {
+    ConnectionStatus {
+        qoder: credential_store::read("qoder-pat").ok().flatten().is_some(),
+        trae: credential_store::read("trae-session")
+            .ok()
+            .flatten()
+            .is_some()
+            || credential_store::read("trae-token")
+                .ok()
+                .flatten()
+                .is_some(),
+    }
+}
+
+#[tauri::command]
+async fn connect_qoder(pat: String, cache: State<'_, QoderTokenCache>) -> Result<(), String> {
+    let pat = pat.trim();
+    let token = external_credits::exchange_qoder_pat(pat)
+        .await
+        .map_err(str::to_owned)?;
+    credential_store::write("qoder-pat", pat)?;
+    *cache.0.lock().await = Some((token, Instant::now()));
+    Ok(())
+}
+
+#[tauri::command]
+async fn forget_qoder(cache: State<'_, QoderTokenCache>) -> Result<(), String> {
+    credential_store::delete("qoder-pat")?;
+    *cache.0.lock().await = None;
+    Ok(())
+}
+
+fn trae_profile_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|root| root.join("trae-login-profile"))
+        .map_err(|_| "无法定位 TRAE 登录数据目录".into())
+}
+
+#[tauri::command]
+async fn forget_trae(app: AppHandle) -> Result<(), String> {
+    credential_store::delete("trae-token")?;
+    credential_store::delete("trae-session")?;
+    let window = if let Some(window) = app.get_webview_window("trae-auth") {
+        window
+    } else {
+        WebviewWindowBuilder::new(
+            &app,
+            "trae-auth",
+            WebviewUrl::External("about:blank".parse().map_err(|_| "无法清除 TRAE 会话")?),
+        )
+        .visible(false)
+        .data_directory(trae_profile_dir(&app)?)
+        .build()
+        .map_err(|_| "无法清除 TRAE 浏览器会话")?
+    };
+    let clear_window = window.clone();
+    let cleared =
+        tauri::async_runtime::spawn_blocking(move || clear_window.clear_all_browsing_data())
+            .await
+            .map_err(|_| "无法清除 TRAE 浏览器会话")?;
+    let _ = window.close();
+    cleared.map_err(|_| "无法清除 TRAE 浏览器会话".to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn save_trae_token(token: String) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("请填写 TRAE Token".into());
+    }
+    credential_store::write("trae-token", token.trim())
+}
+
+#[tauri::command]
+async fn open_trae_login(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("trae-auth") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    let url = "https://www.trae.cn/dashboard#usage"
+        .parse()
+        .map_err(|_| "TRAE 登录地址无效")?;
+    let window = WebviewWindowBuilder::new(&app, "trae-auth", WebviewUrl::External(url))
+        .title("登录 TRAE · QuotaHalo")
+        .inner_size(780.0, 720.0)
+        .data_directory(trae_profile_dir(&app)?)
+        .resizable(true)
+        .build()
+        .map_err(|_| "无法打开 TRAE 登录窗口")?;
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
+    tauri::async_runtime::spawn(async move {
+        use tokio::sync::mpsc;
+        for _ in 0..180 {
+            if !window.is_visible().unwrap_or(false) {
+                break;
+            }
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let _ = window.eval_with_callback(
+                "(()=>{try{return location.hostname==='www.trae.cn' ? localStorage.getItem('Cloud-IDE-Token')||'' : ''}catch{return ''}})()",
+                move |value| { let _ = tx.send(value); },
+            );
+            if let Ok(Some(value)) = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
+                if let Ok(token) = serde_json::from_str::<String>(&value) {
+                    if !token.is_empty() && token.len() < 4096 {
+                        let cookie_window = window.clone();
+                        let session = tauri::async_runtime::spawn_blocking(move || {
+                            let url = "https://www.trae.cn/".parse().ok()?;
+                            cookie_window
+                                .cookies_for_url(url)
+                                .ok()?
+                                .into_iter()
+                                .find(|cookie| cookie.name() == "X-Cloudide-Session")
+                                .map(|cookie| cookie.value().to_string())
+                        })
+                        .await
+                        .ok()
+                        .flatten();
+                        if let Some(session) = session {
+                            let _ = credential_store::write("trae-session", &session);
+                        }
+                        if credential_store::write("trae-token", &token).is_ok() {
+                            let app = window.app_handle();
+                            let _ = app.emit("trae-auth-complete", ());
+                            let _ = window.close();
+                            show_panel(app);
+                            break;
+                        }
+                    }
+                }
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+    });
+    Ok(())
 }
 
 fn position_panel(window: &WebviewWindow) {
@@ -461,6 +660,7 @@ fn widget_size(minimal: bool) -> LogicalSize<f64> {
 
 fn show_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_decorations(false);
         position_panel(&window);
         let _ = window.show();
         let _ = window.set_focus();
@@ -587,6 +787,7 @@ fn apply_rounded_window_region(window: &WebviewWindow) {
 fn main() {
     tauri::Builder::default()
         .manage(AppServerClient::default())
+        .manage(QoderTokenCache::default())
         .setup(|app| {
             let refresh = MenuItem::with_id(app, "refresh", "刷新额度", true, None::<&str>)?;
             let usage =
@@ -623,6 +824,7 @@ fn main() {
                 .build(app)?;
             #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
                 position_panel(&window);
                 apply_rounded_window_region(&window);
             }
@@ -637,9 +839,15 @@ fn main() {
                     apply_rounded_region(hwnd.0, size.width, size.height, scale_factor);
                 }
             }
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            } else if window.label() == "trae-auth"
+                && matches!(event, WindowEvent::CloseRequested { .. })
+            {
+                show_panel(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -647,6 +855,12 @@ fn main() {
             refresh_workbuddy,
             refresh_qoder,
             refresh_trae,
+            connection_status,
+            connect_qoder,
+            forget_qoder,
+            forget_trae,
+            save_trae_token,
+            open_trae_login,
             hide_panel,
             set_widget_mode,
             set_window_opacity,

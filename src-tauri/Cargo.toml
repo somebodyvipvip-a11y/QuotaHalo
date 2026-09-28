@@ -1,6 +1,6 @@
 [package]
 name = "quota-halo"
-version = "0.1.17"
+version = "0.1.18"
 description = "QuotaHalo — a private Codex quota tray clock"
 authors = ["Local user"]
 edition = "2021"
@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["io-util", "process", "sync", "time"] }
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
+  "Win32_Security_Credentials",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
