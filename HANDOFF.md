@@ -2,7 +2,9 @@
 
 ## 当前状态
 
-Windows 托盘第一版已经实现 Codex 5 小时和每周额度显示。用户确认的产品名是 QuotaHalo，中文名“额度光环”。前端参考 `quota-floating-widget-concept.png`，采用紧凑深色半透明浮层和青色强调色。Qoder、Trae、WorkBuddy 暂不在当前版本内。
+Windows 托盘版已实现 Codex 5 小时和每周额度显示，并新增 WorkBuddy、TRAE、Qoder 三个独立积分适配器。用户确认的产品名是 QuotaHalo，中文名“额度光环”。完整模式显示四项服务；极简模式仍只显示 Codex 5 小时额度。
+
+WorkBuddy 使用 `%LOCALAPPDATA%/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info` 中的共享登录会话，请求个人积分汇总接口；已在本机真实账号通过联机测试。Qoder 与 TRAE 的鉴权不能从其客户端稳定取得，当前第一版由用户在设置中手动粘贴凭证，仅保存在本次进程内存。Qoder 和 TRAE 的解析已用固定响应测试，但真实账号响应尚待核对。任何服务失败都只影响自身一行，不将缺失值显示为 0。
 
 本轮修复加入 Windows 原生体验和 App Server 会话复用：浏览器入口改用 `ShellExecuteW`（不启动 `cmd.exe`），浮层空白区域支持拖动，窗口用 `SetWindowRgn` 应用与 CSS 相同半径的原生圆角。Tauri 原生阴影及 CSS 外投影已关闭，透明客户区外不会留下白色背景。底部设置按钮提供紫雾、青蓝、靛蓝、墨绿、琥珀和灰阶六种低明度皮肤，皮肤名写入 WebView 本机存储；每种皮肤的主文字均为白色。设置与刷新按钮使用 Lucide SVG 图标。App Server 在 QuotaHalo 进程生命周期内复用，账号与额度读取串行执行，JSON-RPC 请求编号递增；`-32603` 或 stdio 断开会销毁当前子进程、重新初始化全新的 App Server 会话并完整重读一次。启动时立即读取，之后每 3 分钟读取。每个 JSON-RPC 步骤最多 15 秒，整次读取最多 50 秒；前端以 50.5 秒保险超时并在 `finally` 中清除旋转状态。Windows 子进程使用 `CREATE_NO_WINDOW`；若 `HOME` 或 `CODEX_HOME` 缺失，从 `USERPROFILE` 补足本地配置目录。
 
@@ -11,6 +13,7 @@ Windows 托盘第一版已经实现 Codex 5 小时和每周额度显示。用户
 ## 主要文件
 
 - `src-tauri/src/main.rs`：CLI 自动发现、App Server JSON-RPC、额度解析、托盘与窗口定位。
+- `src-tauri/src/workbuddy_credits.rs`、`external_credits.rs`、`services.rs`：三个积分服务的只读请求、解析和统一快照结构。
 - `src/main.js`：状态渲染、本地时区格式化、剩余百分比与倒计时。
 - `src/styles.css`、`src/index.html`：浮层样式与结构。
 - `src-tauri/tauri.conf.json`：Tauri 窗口和发布配置。
@@ -37,8 +40,8 @@ cargo test --manifest-path src-tauri/Cargo.toml live_logged_in_codex_returns_quo
 cargo build --release --manifest-path src-tauri/Cargo.toml
 ```
 
-裸 EXE 为 `src-tauri/target/release/quota-halo.exe`，交付副本为 `dist/QuotaHalo-0.1.13.exe`。完整模式沿用 0.1.11 的所有额度信息，窗口高度为 300px；设置提供 60%–100% 的 Windows 原生窗口透明度，以及完整 / 极简两种模式选择。极简窗口为 390×180px，只显示 5 小时额度圆环、倒计时和本地重置时刻。安装包可用 `npm run build` 另行生成。运行时需要系统 WebView2 与本机已登录的 Codex CLI；应用自动查找 `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`，也支持 PATH 回退。
+裸 EXE 为 `src-tauri/target/release/quota-halo.exe`，交付副本放在 `dist/`。完整模式使用 330×515 逻辑像素，极简模式为 135×60；设置提供 60%–100% 的 Windows 原生窗口透明度。安装包可用 `npm run build` 另行生成。运行时需要系统 WebView2 与本机已登录的 Codex CLI；应用自动查找 `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`，也支持 PATH 回退。
 
 ## 后续工作
 
-新增服务时为每个产品建立独立的只读数据适配器，不复用 Codex 认证状态。保持“无真实数据就显示缺失状态”的规则。多显示器任务栏定位仍需在更多 Windows 配置下验证。
+用真实 Qoder 和 TRAE 登录凭证核对响应路径、鉴权头和最终积分口径；之后可评估内嵌网页登录以免每次启动手动配置。多显示器任务栏定位仍需在更多 Windows 配置下验证。

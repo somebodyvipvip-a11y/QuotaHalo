@@ -7,6 +7,7 @@ class FakeElement {
     this.textContent = "";
     this.hidden = false;
     this.disabled = false;
+    this.value = "";
     this.style = {};
     this.dataset = {};
     this.attributes = new Set();
@@ -62,6 +63,20 @@ async function runScenario(name, invoke, fireDeadline = false) {
     "#opacity",
     "#opacity-value",
     "#open-usage",
+    "#qoder-token",
+    "#trae-secret",
+    "#trae-auth-mode",
+    "#save-qoder",
+    "#save-trae",
+    "#workbuddy-remaining",
+    "#workbuddy-detail",
+    "#trae-remaining",
+    "#trae-detail",
+    "#qoder-remaining",
+    "#qoder-detail",
+    '[data-service="workbuddy"]',
+    '[data-service="trae"]',
+    '[data-service="qoder"]',
     ".panel",
   ];
   const elements = new Map(selectors.map((selector) => [selector, new FakeElement()]));
@@ -87,7 +102,13 @@ async function runScenario(name, invoke, fireDeadline = false) {
   globalThis.localStorage = { getItem: () => null, setItem: (_key, value) => { savedTheme = value; } };
   globalThis.window = {
     __TAURI__: {
-      core: { invoke },
+      core: { invoke: (command, args) => command === "refresh_workbuddy"
+        ? Promise.resolve({ status: "ready", remaining: 2450.5, total: 3000, updated_at: 1_900_000_000 })
+        : command === "refresh_qoder"
+          ? Promise.resolve({ status: "ready", remaining: 1280, total: 2000, updated_at: 1_900_000_000 })
+          : command === "refresh_trae"
+            ? Promise.resolve({ status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 })
+        : invoke(command, args) },
       event: { listen: async () => {} },
       window: { getCurrentWindow: () => ({ startDragging: async () => {} }) },
     },
@@ -127,11 +148,24 @@ async function runScenario(name, invoke, fireDeadline = false) {
   }
   await Promise.resolve();
   await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
 
   const refresh = elements.get("#refresh");
   assert.equal(refresh.classes.has("is-loading"), false, `${name}: loading class remains`);
   assert.equal(refresh.disabled, false, `${name}: refresh button remains disabled`);
   assert.equal(refresh.attributes.has("aria-busy"), false, `${name}: busy state remains`);
+  assert.equal(elements.get("#workbuddy-remaining").textContent, "2,450.5 积分");
+  assert.equal(elements.get("#qoder-remaining").textContent, "—");
+  elements.get("#qoder-token").value = "test-token";
+  elements.get("#save-qoder").listeners.get("click")();
+  elements.get("#trae-secret").value = "test-secret";
+  elements.get("#trae-auth-mode").value = "bearer";
+  elements.get("#save-trae").listeners.get("click")();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(elements.get("#qoder-token").value, "", `${name}: Qoder credential remained in input`);
+  assert.equal(elements.get("#trae-secret").value, "", `${name}: TRAE credential remained in input`);
+  assert.equal(elements.get("#qoder-remaining").textContent, "1,280 积分");
+  assert.equal(elements.get("#trae-remaining").textContent, "860 积分");
   return elements;
 }
 

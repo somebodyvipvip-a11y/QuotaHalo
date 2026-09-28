@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod external_credits;
+mod services;
+mod workbuddy_credits;
+
 use std::{
     collections::HashSet,
     env,
@@ -26,8 +30,8 @@ use tokio::{
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(50);
 const MAX_SESSION_ATTEMPTS: u8 = 3;
-const FULL_WINDOW_WIDTH: f64 = 300.0;
-const FULL_WINDOW_HEIGHT: f64 = 300.0;
+const FULL_WINDOW_WIDTH: f64 = 330.0;
+const FULL_WINDOW_HEIGHT: f64 = 515.0;
 const COMPACT_WINDOW_WIDTH: f64 = 135.0;
 const COMPACT_WINDOW_HEIGHT: f64 = 60.0;
 
@@ -410,6 +414,21 @@ async fn refresh_quota(client: State<'_, AppServerClient>) -> Result<QuotaSnapsh
     Ok(client.refresh().await)
 }
 
+#[tauri::command]
+async fn refresh_workbuddy() -> services::CreditSnapshot {
+    workbuddy_credits::fetch().await
+}
+
+#[tauri::command]
+async fn refresh_qoder(token: String) -> services::CreditSnapshot {
+    external_credits::fetch_qoder(&token).await
+}
+
+#[tauri::command]
+async fn refresh_trae(secret: String, auth_mode: String) -> services::CreditSnapshot {
+    external_credits::fetch_trae(&secret, &auth_mode).await
+}
+
 fn position_panel(window: &WebviewWindow) {
     let Ok(Some(monitor)) = window.primary_monitor() else {
         return;
@@ -625,6 +644,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             refresh_quota,
+            refresh_workbuddy,
+            refresh_qoder,
+            refresh_trae,
             hide_panel,
             set_widget_mode,
             set_window_opacity,
@@ -753,7 +775,7 @@ mod tests {
     fn display_modes_use_logical_dimensions_for_high_dpi_displays() {
         let full = widget_size(false);
         let compact = widget_size(true);
-        assert_eq!((full.width, full.height), (300.0, 300.0));
+        assert_eq!((full.width, full.height), (330.0, 515.0));
         assert_eq!((compact.width, compact.height), (135.0, 60.0));
     }
 

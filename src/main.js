@@ -28,11 +28,25 @@ const elements = {
   opacity: document.querySelector("#opacity"),
   opacityValue: document.querySelector("#opacity-value"),
   openUsage: document.querySelector("#open-usage"),
+  qoderToken: document.querySelector("#qoder-token"),
+  traeSecret: document.querySelector("#trae-secret"),
+  traeAuthMode: document.querySelector("#trae-auth-mode"),
+  saveQoder: document.querySelector("#save-qoder"),
+  saveTrae: document.querySelector("#save-trae"),
+  credits: Object.fromEntries(["workbuddy", "trae", "qoder"].map((name) => [name, {
+    row: document.querySelector(`[data-service="${name}"]`),
+    value: document.querySelector(`#${name}-remaining`),
+    detail: document.querySelector(`#${name}-detail`),
+  }])),
 };
 
 let snapshot = null;
 let refreshing = false;
+const creditSnapshots = {};
+const credentials = { qoder: "", trae: "", traeMode: "bearer" };
+const creditRequestIds = { workbuddy: 0, trae: 0, qoder: 0 };
 const AUTO_REFRESH_INTERVAL_MS = 180_000;
+const CREDIT_REFRESH_INTERVAL_MS = 300_000;
 const REFRESH_DEADLINE_MS = 50_500;
 const THEME_STORAGE_KEY = "quota-halo-skin";
 const OPACITY_STORAGE_KEY = "quota-halo-opacity";
@@ -156,6 +170,8 @@ function render() {
   elements.errorContent.hidden = !failed;
   if (failed) {
     elements.errorMessage.textContent = snapshot.message || "无法读取 Codex 额度。";
+    setMiniWindow(null);
+    elements.miniCountdown.textContent = "Codex 暂时不可用";
   } else {
     setWindow(
       { remaining: elements.primaryRemaining, reset: elements.primaryReset, progress: elements.primaryProgress },
@@ -168,17 +184,71 @@ function render() {
     );
     setMiniWindow(snapshot.primary);
   }
-  elements.updatedAt.textContent = snapshot.updated_at
-    ? `更新于 ${formatTime(snapshot.updated_at)}`
-    : "尚未更新";
+  renderUpdatedAt();
 }
 
-async function refresh() {
-  if (refreshing) return;
-  refreshing = true;
-  elements.refresh.disabled = true;
-  elements.refresh.setAttribute("aria-busy", "true");
-  elements.refresh.classList.add("is-loading");
+function renderCredit(name) {
+  const view = elements.credits[name];
+  const data = creditSnapshots[name];
+  if (!view || !data) return;
+  const ready = data.status === "ready" && (data.unlimited || (typeof data.remaining === "number" && Number.isFinite(data.remaining) && data.remaining >= 0));
+  const remaining = data.remaining;
+  const total = data.total;
+  const low = ready && !data.unlimited && typeof total === "number" && Number.isFinite(total) && total > 0 && remaining / total <= 0.1;
+  view.row.dataset.status = low ? "low" : ready ? "ready" : "unavailable";
+  view.value.textContent = !ready ? "—" : data.unlimited ? "不限量" : `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(remaining)} 积分`;
+  view.detail.textContent = ready
+    ? data.unlimited ? "企业额度" : data.updated_at ? `更新于 ${formatTime(data.updated_at)}` : "已更新"
+    : data.message || "暂时无法读取";
+  view.row.title = view.detail.textContent;
+  renderUpdatedAt();
+}
+
+function renderUpdatedAt() {
+  const latest = Math.max(snapshot?.updated_at || 0, ...Object.values(creditSnapshots).map((item) => item.updated_at || 0));
+  elements.updatedAt.textContent = latest ? `更新于 ${formatTime(latest)}` : "尚未更新";
+}
+
+async function refreshCredit(name) {
+  const requestId = ++creditRequestIds[name];
+  let command;
+  let args;
+  if (name === "workbuddy") command = "refresh_workbuddy";
+  else if (name === "qoder") {
+    if (!credentials.qoder) {
+      creditSnapshots.qoder = { status: "unavailable", message: "请在设置中配置凭证" };
+      renderCredit(name);
+      return;
+    }
+    command = "refresh_qoder";
+    args = { token: credentials.qoder };
+  } else {
+    if (!credentials.trae) {
+      creditSnapshots.trae = { status: "unavailable", message: "请在设置中配置凭证" };
+      renderCredit(name);
+      return;
+    }
+    command = "refresh_trae";
+    args = { secret: credentials.trae, authMode: credentials.traeMode };
+  }
+  creditSnapshots[name] = { status: "loading", message: "正在读取" };
+  renderCredit(name);
+  try {
+    const result = await invoke(command, args);
+    if (requestId !== creditRequestIds[name]) return;
+    creditSnapshots[name] = result;
+  } catch {
+    if (requestId !== creditRequestIds[name]) return;
+    creditSnapshots[name] = { status: "unavailable", message: "读取失败，请稍后重试" };
+  }
+  renderCredit(name);
+}
+
+async function refreshCredits() {
+  await Promise.all(["workbuddy", "trae", "qoder"].map(refreshCredit));
+}
+
+async function refreshCodex() {
   let deadline;
   try {
     snapshot = await Promise.race([
@@ -198,11 +268,23 @@ async function refresh() {
     snapshot = { status: "unavailable", message: "额度工具发生意外错误。", updated_at: null };
   } finally {
     clearTimeout(deadline);
+    render();
+  }
+}
+
+async function refresh() {
+  if (refreshing) return;
+  refreshing = true;
+  elements.refresh.disabled = true;
+  elements.refresh.setAttribute("aria-busy", "true");
+  elements.refresh.classList.add("is-loading");
+  try {
+    await Promise.all([refreshCodex(), refreshCredits()]);
+  } finally {
     refreshing = false;
     elements.refresh.disabled = false;
     elements.refresh.removeAttribute("aria-busy");
     elements.refresh.classList.remove("is-loading");
-    render();
   }
 }
 
@@ -214,6 +296,17 @@ elements.settings.addEventListener("click", () => {
   elements.settings.setAttribute("aria-expanded", String(open));
 });
 elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
+elements.saveQoder.addEventListener("click", () => {
+  credentials.qoder = elements.qoderToken.value.trim();
+  elements.qoderToken.value = "";
+  void refreshCredit("qoder");
+});
+elements.saveTrae.addEventListener("click", () => {
+  credentials.trae = elements.traeSecret.value.trim();
+  credentials.traeMode = elements.traeAuthMode.value;
+  elements.traeSecret.value = "";
+  void refreshCredit("trae");
+});
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
 document.querySelectorAll(".theme-choice").forEach((choice) => {
@@ -236,12 +329,19 @@ document.querySelector(".panel").addEventListener("mousedown", (event) => {
   void appWindow.startDragging().catch(() => {});
 });
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") invoke("hide_panel");
+  if (event.key !== "Escape") return;
+  if (!elements.settingsPanel.hidden) {
+    elements.settingsPanel.hidden = true;
+    elements.settings.setAttribute("aria-expanded", "false");
+  } else {
+    void invoke("hide_panel");
+  }
 });
 
 await listen("quota-refresh-request", refresh);
 setInterval(() => {
   if (snapshot?.primary) render();
 }, 1000);
-setInterval(refresh, AUTO_REFRESH_INTERVAL_MS);
+setInterval(() => { void refreshCodex(); }, AUTO_REFRESH_INTERVAL_MS);
+setInterval(() => { void refreshCredits(); }, CREDIT_REFRESH_INTERVAL_MS);
 refresh();

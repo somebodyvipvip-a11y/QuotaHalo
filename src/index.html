@@ -16,7 +16,7 @@
       <section id="quota-content" class="quota-content" data-tauri-drag-region>
         <article class="quota-card primary-card">
           <div class="quota-topline">
-            <span class="quota-name">5 小时额度</span>
+            <span class="quota-name">Codex · 5 小时额度</span>
             <span id="primary-remaining" class="remaining">—</span>
           </div>
           <div class="progress-track" aria-label="5 小时额度剩余比例">
@@ -29,7 +29,7 @@
 
         <article class="quota-card weekly-card">
           <div class="quota-topline weekly-topline">
-            <span class="quota-name">每周额度</span>
+            <span class="quota-name">Codex · 每周额度</span>
             <span id="weekly-remaining" class="remaining">—</span>
           </div>
           <div class="progress-track weekly-progress-track" aria-label="每周额度剩余比例">
@@ -42,6 +42,25 @@
       <section id="error-content" class="error-content" data-tauri-drag-region hidden>
         <p id="error-message"></p>
         <button id="open-usage" class="usage-button" type="button">打开 ChatGPT 用量页面</button>
+      </section>
+
+      <section class="credits-content" aria-label="其他服务积分">
+        <div class="section-caption"><span>积分账户</span><span class="section-rule"></span></div>
+        <article class="credit-row" data-service="workbuddy">
+          <span class="service-mark workbuddy-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="2.5"/><circle cx="17" cy="9" r="2"/><path d="M3.5 19v-1.6a5.5 5.5 0 0 1 11 0V19ZM15 14.5a4.5 4.5 0 0 1 5.5 4.5H17"/></svg></span>
+          <div class="credit-copy"><strong>WorkBuddy</strong><small id="workbuddy-detail">正在读取</small></div>
+          <strong id="workbuddy-remaining" class="credit-value">—</strong>
+        </article>
+        <article class="credit-row" data-service="trae">
+          <span class="service-mark trae-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 5 6 7-6 7M13 19h6"/></svg></span>
+          <div class="credit-copy"><strong>TRAE</strong><small id="trae-detail">等待配置</small></div>
+          <strong id="trae-remaining" class="credit-value">—</strong>
+        </article>
+        <article class="credit-row" data-service="qoder">
+          <span class="service-mark qoder-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 2 8.5 5v10L12 22l-8.5-5V7ZM3.5 7 12 12l8.5-5M12 12v10"/></svg></span>
+          <div class="credit-copy"><strong>Qoder</strong><small id="qoder-detail">等待配置</small></div>
+          <strong id="qoder-remaining" class="credit-value">—</strong>
+        </article>
       </section>
 
       <section id="mini-content" class="mini-content" data-tauri-drag-region hidden>
@@ -69,7 +88,14 @@
         </div>
       </footer>
       <aside id="settings-panel" class="settings-panel" aria-label="外观设置" hidden>
-        <p class="settings-title">皮肤</p>
+        <p class="settings-title">连接服务</p>
+        <p class="settings-hint">凭证仅保留至本次退出，重新打开需再次填写。</p>
+        <label class="credential-field" for="qoder-token">Qoder Access Token</label>
+        <div class="credential-line"><input id="qoder-token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 token" /><button id="save-qoder" type="button">应用</button></div>
+        <label class="credential-field" for="trae-secret">TRAE 登录凭证</label>
+        <div class="credential-line"><select id="trae-auth-mode" aria-label="TRAE 凭证类型"><option value="bearer">Bearer Token</option><option value="cloudide">Cloudide Token</option><option value="cookie">Cookie</option></select><input id="trae-secret" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴凭证" /><button id="save-trae" type="button">应用</button></div>
+        <div class="appearance-divider"></div>
+        <p class="settings-title">外观</p>
         <div class="theme-grid">
           <button class="theme-choice" type="button" data-theme="violet"><i></i>紫雾</button>
           <button class="theme-choice" type="button" data-theme="cyan"><i></i>青蓝</button>
