@@ -234,6 +234,7 @@ const markup = await readFile(resolve("src/index.html"), "utf8");
 assert.match(styles, /\.panel \{[^}]*border-radius:16px/);
 assert.match(styles, /\.panel \{[^}]*border:0/);
 assert.match(styles, /\.settings-panel \{ position:absolute; inset:0 0 42px/);
+assert.match(styles, /\.settings-content:hover::-webkit-scrollbar-thumb \{ background:var\(--soft-border\)/);
 assert.match(styles, /\.halo-ring \{[^}]*flex: 0 0 104px/);
 assert.match(styles, /\.theme-choice\[data-theme="violet"\] i \{ background:#bc5cff/);
 assert.match(markup, /距离重置还剩/);

@@ -167,7 +167,13 @@ body[data-mode="compact"] .settings-panel { display: none; }
 .settings-header h2 { margin:0; text-align:center; color:var(--text); font-size:15px; font-weight:670; letter-spacing:-.2px; }
 .settings-header .icon-button { width:27px; height:27px; border-radius:8px; }
 .settings-header .icon-button svg { width:17px; height:17px; }
-.settings-content { min-height:0; overflow-y:auto; padding:14px 16px 20px; scrollbar-width:thin; }
+.settings-content { min-height:0; overflow-y:auto; padding:14px 16px 20px; scrollbar-width:thin; scrollbar-color:transparent transparent; }
+.settings-content:hover { scrollbar-color:var(--soft-border) transparent; }
+.settings-content::-webkit-scrollbar { width:5px; }
+.settings-content::-webkit-scrollbar-track { background:transparent; }
+.settings-content::-webkit-scrollbar-thumb { border-radius:999px; background:transparent; }
+.settings-content:hover::-webkit-scrollbar-thumb { background:var(--soft-border); }
+.settings-content::-webkit-scrollbar-thumb:hover { background:var(--highlight); }
 .settings-group { margin:0 0 15px; padding:12px; border:1px solid var(--soft-border); border-radius:14px; background:var(--surface-raised); box-shadow:inset 0 1px 0 var(--highlight); }
 .settings-group:last-child { margin-bottom:0; }
 .settings-group-heading { margin-bottom:11px; }
