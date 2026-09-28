@@ -138,6 +138,7 @@ body[data-mode="compact"] .settings-panel { display: none; }
 .progress-fill { box-shadow: 0 0 15px var(--accent-glow); }
 .service-mark { background: #31486a; }
 .workbuddy-mark { background: #28594d; }
+.workbuddy-mark::before { content:""; display:block; width:17px; height:17px; background:currentColor; mask:url("./workbuddy.svg") center/contain no-repeat; -webkit-mask:url("./workbuddy.svg") center/contain no-repeat; }
 .trae-mark { background: #4b4276; }
 .qoder-mark { background: #6d5130; }
 .qoder-mark::before { content:""; display:block; width:17px; height:17px; background:currentColor; mask:url("./qoder-color.svg") center/contain no-repeat; -webkit-mask:url("./qoder-color.svg") center/contain no-repeat; }
