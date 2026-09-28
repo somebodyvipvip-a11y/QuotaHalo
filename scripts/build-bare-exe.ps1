@@ -34,3 +34,5 @@ $releaseExecutable = Join-Path $outputDirectory "QuotaHalo-$version.exe"
 Copy-Item -LiteralPath $builtExecutable -Destination $releaseExecutable -Force
 
 Write-Host "Done: $releaseExecutable"
+
+Start-Process -FilePath $releaseExecutable
