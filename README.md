@@ -4,9 +4,9 @@ Windows 托盘小工具，汇总 Codex 的 5 小时／每周额度，以及 Work
 
 ## 运行
 
-直接运行便携版裸 EXE：
+直接运行便携版裸 EXE（文件名包含当前版本号）：
 
-`dist/QuotaHalo-0.1.19.exe`
+`dist/QuotaHalo-<version>.exe`
 
 应用启动时显示浮层，托盘左键可打开或隐藏。完整模式按服务分别显示真实额度；某服务读取失败时只在该行显示原因，其他服务仍可更新。底部齿轮提供深色玻璃主题、透明度以及 Qoder／TRAE 账号连接。极简模式仍只显示 Codex 的 5 小时额度。浮层可从非按钮区域拖动，右键托盘菜单提供刷新、打开 ChatGPT 用量页面和退出操作。
 
@@ -23,10 +23,16 @@ npm run dev
 重新生成裸 EXE：
 
 ```powershell
-cargo build --release --manifest-path src-tauri/Cargo.toml
+.\scripts\build-bare-exe.ps1
 ```
 
-生成的可执行文件位于 `src-tauri/target/release/quota-halo.exe`。如需安装包，执行 `npm run build`。
+脚本会执行 release 构建，并输出 `dist/QuotaHalo-<version>.exe`；不会生成安装器。若 PowerShell 的执行策略阻止运行，可使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-bare-exe.ps1
+```
+
+如需安装包，执行 `npm run build`。
 
 ## 数据读取方式
 
