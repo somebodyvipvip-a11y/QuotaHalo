@@ -712,6 +712,7 @@ fn show_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_decorations(false);
         position_panel(&window);
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
         let _ = app.emit("quota-refresh-request", ());
@@ -720,7 +721,9 @@ fn show_panel(app: &AppHandle) {
 
 fn toggle_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        if window.is_visible().unwrap_or(false) {
+        if window.is_minimized().unwrap_or(false) {
+            show_panel(app);
+        } else if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
             show_panel(app);

@@ -313,7 +313,13 @@ async function refresh() {
   }
 }
 
-elements.timezone.textContent = timezoneLabel();
+function updateTimezone() {
+  elements.timezone.textContent = timezoneLabel();
+}
+
+updateTimezone();
+setInterval(updateTimezone, 60_000);
+window.addEventListener("focus", updateTimezone);
 elements.refresh.addEventListener("click", refresh);
 elements.settings.addEventListener("click", () => {
   const open = elements.settingsPanel.hidden;
