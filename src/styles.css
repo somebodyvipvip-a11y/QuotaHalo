@@ -216,4 +216,4 @@ body[data-edge-peek="left"] .edge-peek { right:0; } body[data-edge-peek="right"]
 body[data-edge-peek="left"] .edge-peek span,body[data-edge-peek="right"] .edge-peek span { position:absolute; right:5px; bottom:5px; left:5px; height:var(--remaining); }
 body[data-edge-peek="top"] .edge-peek { right:0; bottom:0; left:0; height:20px; }
 body[data-edge-peek="top"] .edge-peek span { position:absolute; top:5px; bottom:5px; left:5px; width:var(--remaining); }
-body[data-edge-peek] .mini-content { display:none; }
+body[data-edge-peek="left"] .mini-content,body[data-edge-peek="right"] .mini-content,body[data-edge-peek="top"] .mini-content { display:none; }

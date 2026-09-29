@@ -135,7 +135,7 @@ function applyDisplayMode(compact, persist = true) {
   elements.miniContent.hidden = !enabled;
   edgePeekDirection = null;
   elements.edgePeek.hidden = true;
-  document.body.dataset.edgePeek = "";
+  delete document.body.dataset.edgePeek;
   if (enabled) {
     setSettingsView(false);
   }
@@ -482,7 +482,7 @@ elements.edgePeek.addEventListener("mousedown", () => {
   if (!edgePeekDirection) return;
   void invoke("expand_edge_peek", { direction: edgePeekDirection });
   edgePeekDirection = null;
-  document.body.dataset.edgePeek = "";
+  delete document.body.dataset.edgePeek;
   elements.edgePeek.hidden = true;
   void appWindow.startDragging().catch(() => {});
 });

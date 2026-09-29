@@ -9,7 +9,7 @@ class FakeElement {
     this.hidden = false;
     this.disabled = false;
     this.value = "";
-    this.style = {};
+    this.style = { setProperty: (name, value) => { this.style[name] = value; } };
     this.dataset = {};
     this.parentElement = this;
     this.attributes = new Set();
@@ -62,6 +62,8 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     "#mini-ring-progress",
     "#mini-countdown",
     "#mini-reset",
+    "#edge-peek",
+    "#edge-peek-progress",
     "#exit-compact",
     "#minimize",
     "#close-panel",
@@ -195,6 +197,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   elements.get("#compact-toggle").listeners.get("click")();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode was not enabled`);
+  assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: ordinary compact mode was incorrectly marked as edge peek`);
   assert.equal(elements.get("#mini-content").hidden, false, `${name}: compact content was not shown`);
   elements.get("#exit-compact").listeners.get("click")();
   await Promise.resolve();
