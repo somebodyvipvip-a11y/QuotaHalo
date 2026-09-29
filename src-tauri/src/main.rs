@@ -765,13 +765,22 @@ fn edge_peek_direction(window: &WebviewWindow) -> Option<&'static str> {
     let scale = window.scale_factor().ok()?;
     let threshold = (EDGE_SNAP_THRESHOLD * scale).round() as i32;
     let size = window.outer_size().ok()?;
-    edge_peek_direction_for(
-        position,
-        size,
+    let (area_position, area_size) = edge_peek_detection_area(
         *monitor.position(),
         *monitor.size(),
-        threshold,
-    )
+        monitor.work_area().position,
+        monitor.work_area().size,
+    );
+    edge_peek_direction_for(position, size, area_position, area_size, threshold)
+}
+
+fn edge_peek_detection_area(
+    _monitor_position: PhysicalPosition<i32>,
+    _monitor_size: PhysicalSize<u32>,
+    work_area_position: PhysicalPosition<i32>,
+    work_area_size: PhysicalSize<u32>,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+    (work_area_position, work_area_size)
 }
 
 fn edge_peek_direction_for(
@@ -869,6 +878,14 @@ fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
     let Some(direction) = edge_peek_direction(&window) else {
         return Ok(None);
     };
+    collapse_edge_peek_to(direction, &window)?;
+    Ok(Some(direction.to_owned()))
+}
+
+fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), String> {
+    if !matches!(direction, "left" | "right" | "top") {
+        return Err("无法识别边缘吸附方向。".to_owned());
+    }
     let monitor = window
         .current_monitor()
         .map_err(|_| "无法读取显示器区域。")?
@@ -876,13 +893,8 @@ fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
     let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
     let size = edge_peek_size(direction, scale);
     let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
-    let target = edge_peek_position(
-        direction,
-        position,
-        size,
-        *monitor.position(),
-        *monitor.size(),
-    );
+    let area = monitor.work_area();
+    let target = edge_peek_position(direction, position, size, area.position, area.size);
     window
         .set_size(size)
         .map_err(|_| "无法收起 QuotaHalo 边缘窗口。")?;
@@ -891,7 +903,12 @@ fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
         .map_err(|_| "无法吸附 QuotaHalo 窗口。")?;
     #[cfg(target_os = "windows")]
     apply_rounded_window_region(&window, EDGE_PEEK_CORNER_RADIUS);
-    Ok(Some(direction.to_owned()))
+    Ok(())
+}
+
+#[tauri::command]
+fn collapse_edge_peek(direction: String, window: WebviewWindow) -> Result<(), String> {
+    collapse_edge_peek_to(direction.as_str(), &window)
 }
 
 #[tauri::command]
@@ -903,13 +920,9 @@ fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), Stri
     let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
     let size = compact_window_size(scale);
     let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
-    let target = edge_peek_expanded_position(
-        direction.as_str(),
-        position,
-        size,
-        *monitor.position(),
-        *monitor.size(),
-    );
+    let area = monitor.work_area();
+    let target =
+        edge_peek_expanded_position(direction.as_str(), position, size, area.position, area.size);
     window
         .set_size(size)
         .map_err(|_| "无法展开 QuotaHalo 窗口。".to_owned())?;
@@ -1109,6 +1122,7 @@ fn main() {
             quit_app,
             set_widget_mode,
             snap_edge_peek,
+            collapse_edge_peek,
             expand_edge_peek,
             set_main_window_size,
             set_window_opacity,
@@ -1326,6 +1340,43 @@ mod tests {
         assert_eq!(
             edge_peek_direction_for(PhysicalPosition::new(700, 1020), size, origin, monitor, 24),
             None
+        );
+    }
+
+    #[test]
+    fn edge_peek_uses_the_windows_work_area_for_side_detection() {
+        let monitor_position = PhysicalPosition::new(0, 0);
+        let monitor_size = PhysicalSize::new(1920, 1080);
+        let work_area_position = PhysicalPosition::new(0, 0);
+        let work_area_size = PhysicalSize::new(1880, 1040);
+        assert_eq!(
+            edge_peek_detection_area(
+                monitor_position,
+                monitor_size,
+                work_area_position,
+                work_area_size
+            ),
+            (work_area_position, work_area_size)
+        );
+        assert_eq!(
+            edge_peek_direction_for(
+                PhysicalPosition::new(1745, 420),
+                PhysicalSize::new(135, 60),
+                work_area_position,
+                work_area_size,
+                24
+            ),
+            Some("right")
+        );
+        assert_eq!(
+            edge_peek_position(
+                "right",
+                PhysicalPosition::new(1745, 420),
+                edge_peek_size("right", 1.0),
+                work_area_position,
+                work_area_size
+            ),
+            PhysicalPosition::new(1860, 420)
         );
     }
 

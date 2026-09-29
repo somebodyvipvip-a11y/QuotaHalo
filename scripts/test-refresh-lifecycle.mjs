@@ -117,6 +117,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   let movedCallback;
   let edgeMoveCallback;
   let edgeLeaveCallback;
+  const edgeCommands = [];
   const intervalMs = [];
   const themeChoices = ["violet", "blue", "mint", "amber"].map((theme) => {
     const choice = new FakeElement();
@@ -154,7 +155,11 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
           : command === "refresh_trae"
             ? Promise.resolve(connected.trae ? { status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请登录 TRAE 账号" })
         : command === "snap_edge_peek"
-          ? Promise.resolve("left")
+          ? (edgeCommands.push({ command, args }), Promise.resolve("left"))
+        : command === "collapse_edge_peek"
+          ? (edgeCommands.push({ command, args }), Promise.resolve())
+        : command === "expand_edge_peek"
+          ? (edgeCommands.push({ command, args }), Promise.resolve())
         : command === "refresh_quota" && verifyRefreshRetention && quotaCalls++ > 0
           ? new Promise((resolve) => { resolveSecondQuota = resolve; })
           : invoke(command, args) },
@@ -195,11 +200,14 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: stopped window movement did not enter edge peek`);
   elements.get("#edge-peek").listeners.get("mouseenter")();
+  await Promise.resolve();
   assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: hover expansion kept compact content hidden`);
-  elements.get("#mini-content").listeners.get("mouseleave")();
+  assert.equal(typeof elements.get(".panel").listeners.get("mouseleave"), "function", `${name}: edge peek collapse is not bound to the stable panel boundary`);
+  elements.get(".panel").listeners.get("mouseleave")();
   edgeLeaveCallback();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: leaving expanded compact mode did not restore edge peek`);
+  assert.deepEqual(edgeCommands.slice(-1), [{ command: "collapse_edge_peek", args: { direction: "left" } }], `${name}: expanded edge changed direction or re-ran edge detection`);
   elements.get("#exit-compact").listeners.get("click")();
   await Promise.resolve();
   assert.ok(intervalMs.includes(180_000), `${name}: automatic refresh is not three minutes`);

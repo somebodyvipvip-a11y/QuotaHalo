@@ -67,6 +67,8 @@ let refreshing = false;
 let settingsViewOpen = false;
 let codexRequestId = 0;
 let edgePeekDirection = null;
+let edgePeekExpanded = false;
+let edgePeekTransitioning = false;
 let edgePeekTimer;
 let edgeMoveTimer;
 const creditSnapshots = {};
@@ -135,6 +137,9 @@ function applyDisplayMode(compact, persist = true) {
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
   edgePeekDirection = null;
+  edgePeekExpanded = false;
+  edgePeekTransitioning = false;
+  clearTimeout(edgePeekTimer);
   elements.edgePeek.hidden = true;
   delete document.body.dataset.edgePeek;
   if (enabled) {
@@ -154,14 +159,17 @@ function setSettingsView(open) {
 }
 
 async function enterEdgePeekIfNearEdge() {
-  if (document.body.dataset.mode !== "compact" || edgePeekDirection) return;
+  if (document.body.dataset.mode !== "compact" || edgePeekDirection || edgePeekTransitioning) return;
+  edgePeekTransitioning = true;
   try {
     const direction = await invoke("snap_edge_peek");
     if (!direction) return;
     edgePeekDirection = direction;
+    edgePeekExpanded = false;
     document.body.dataset.edgePeek = direction;
     elements.edgePeek.hidden = false;
   } catch { /* keep normal compact mode */ }
+  finally { edgePeekTransitioning = false; }
 }
 
 try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
@@ -465,33 +473,51 @@ elements.forgetTrae.addEventListener("click", () => { void forgetService("forget
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
 elements.miniContent.addEventListener("mouseup", () => { void enterEdgePeekIfNearEdge(); });
-elements.edgePeek.addEventListener("mouseenter", () => {
-  if (!edgePeekDirection) return;
-  void invoke("expand_edge_peek", { direction: edgePeekDirection });
-  delete document.body.dataset.edgePeek;
-  elements.edgePeek.hidden = true;
-});
-elements.miniContent.addEventListener("mouseleave", () => {
-  if (!edgePeekDirection || document.body.dataset.mode !== "compact") return;
+elements.edgePeek.addEventListener("mouseenter", async () => {
+  if (!edgePeekDirection || edgePeekExpanded || edgePeekTransitioning) return;
   clearTimeout(edgePeekTimer);
+  edgePeekTransitioning = true;
+  try {
+    await invoke("expand_edge_peek", { direction: edgePeekDirection });
+    edgePeekExpanded = true;
+    delete document.body.dataset.edgePeek;
+    elements.edgePeek.hidden = true;
+  } catch { /* keep collapsed edge peek */ }
+  finally { edgePeekTransitioning = false; }
+});
+const panel = document.querySelector(".panel");
+panel.addEventListener("mouseenter", () => {
+  clearTimeout(edgePeekTimer);
+});
+panel.addEventListener("mouseleave", () => {
+  if (!edgePeekDirection || !edgePeekExpanded || document.body.dataset.mode !== "compact") return;
+  clearTimeout(edgePeekTimer);
+  const direction = edgePeekDirection;
   edgePeekTimer = setTimeout(async () => {
+    if (edgePeekDirection !== direction || !edgePeekExpanded || edgePeekTransitioning) return;
+    edgePeekTransitioning = true;
     try {
-      const direction = await invoke("snap_edge_peek");
-      if (direction) {
-        document.body.dataset.edgePeek = direction;
-        elements.edgePeek.hidden = false;
-      }
+      await invoke("collapse_edge_peek", { direction });
+      edgePeekExpanded = false;
+      document.body.dataset.edgePeek = direction;
+      elements.edgePeek.hidden = false;
     } catch { /* keep expanded compact mode */ }
+    finally { edgePeekTransitioning = false; }
   }, 350);
 });
 elements.edgePeek.addEventListener("mousedown", async () => {
-  if (!edgePeekDirection) return;
+  if (!edgePeekDirection || edgePeekTransitioning) return;
+  clearTimeout(edgePeekTimer);
+  edgePeekTransitioning = true;
   try {
     await invoke("expand_edge_peek", { direction: edgePeekDirection });
   } catch {
+    edgePeekTransitioning = false;
     return;
   }
   edgePeekDirection = null;
+  edgePeekExpanded = false;
+  edgePeekTransitioning = false;
   delete document.body.dataset.edgePeek;
   elements.edgePeek.hidden = true;
   await appWindow.startDragging().catch(() => {});
@@ -513,7 +539,7 @@ elements.openUsage.addEventListener("click", async () => {
     elements.errorMessage.textContent = "无法打开 ChatGPT 用量页面，请检查系统默认浏览器设置。";
   }
 });
-document.querySelector(".panel").addEventListener("mousedown", (event) => {
+panel.addEventListener("mousedown", (event) => {
   if (event.button !== 0 || !(event.target instanceof Element)) return;
   if (event.target.closest("button, a, input, textarea, select")) return;
   void appWindow.startDragging().catch(() => {});
