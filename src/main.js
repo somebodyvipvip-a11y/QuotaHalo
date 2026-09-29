@@ -165,7 +165,7 @@ async function enterEdgePeekIfNearEdge() {
 }
 
 try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
-try { applyDisplayMode(localStorage.getItem(MODE_STORAGE_KEY) !== "full", false); } catch { applyDisplayMode(true, false); }
+applyDisplayMode(false, false);
 applyCreditVisibility(creditVisibility, false);
 
 function timezoneLabel() {

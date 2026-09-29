@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "quota-halo"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "reqwest",
  "serde",

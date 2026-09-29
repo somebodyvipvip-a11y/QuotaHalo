@@ -133,7 +133,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   };
   let savedTheme;
   const connected = { qoder: false, trae: false };
-  globalThis.localStorage = { getItem: () => null, setItem: (_key, value) => { savedTheme = value; } };
+  globalThis.localStorage = { getItem: (key) => key === "quota-halo-display-mode" ? "compact" : null, setItem: (_key, value) => { savedTheme = value; } };
   globalThis.window = {
     innerWidth: 290,
     __TAURI__: {
@@ -185,7 +185,10 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   const moduleUrl = `${pathToFileURL(resolve("src/main.js")).href}?test=${name}`;
   await import(moduleUrl);
   await Promise.resolve();
-  assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: fresh launch should default to compact mode`);
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: fresh launch should default to full mode`);
+  elements.get("#compact-toggle").listeners.get("click")();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode could not be enabled`);
   assert.equal(typeof movedCallback, "function", `${name}: window movement was not observed for edge peek`);
   movedCallback();
   edgeMoveCallback();
@@ -197,6 +200,8 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   edgeLeaveCallback();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: leaving expanded compact mode did not restore edge peek`);
+  elements.get("#exit-compact").listeners.get("click")();
+  await Promise.resolve();
   assert.ok(intervalMs.includes(180_000), `${name}: automatic refresh is not three minutes`);
   assert.equal(globalThis.document.body.dataset.theme, "", `${name}: violet should be the default skin`);
   if (verifyRefreshRetention) {
@@ -283,6 +288,8 @@ assert.match(styles, /\.theme-choice\[data-theme="violet"\] i \{ background:#bc5
 assert.match(markup, /距离重置还剩/);
 assert.match(styles, /\.qoder-mark::before \{[^}]*mask:url\("\.\/qoder-color\.svg"\)/);
 assert.match(markup, /<img src="\.\/workbuddy\.svg" alt=""/);
+assert.match(styles, /\.edge-peek \{[^}]*border-radius:5px/);
+assert.match(styles, /\.edge-peek span \{[^}]*border-radius:999px/);
 
 const failed = await runScenario("rpc-error", async () => ({
   status: "unavailable",
