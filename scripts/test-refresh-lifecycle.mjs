@@ -9,7 +9,7 @@ class FakeElement {
     this.hidden = false;
     this.disabled = false;
     this.value = "";
-    this.style = {};
+    this.style = { setProperty: (name, value) => { this.style[name] = value; } };
     this.dataset = {};
     this.parentElement = this;
     this.attributes = new Set();
@@ -62,6 +62,8 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     "#mini-ring-progress",
     "#mini-countdown",
     "#mini-reset",
+    "#edge-peek",
+    "#edge-peek-progress",
     "#exit-compact",
     "#minimize",
     "#close-panel",
@@ -112,6 +114,10 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   let deadlineMs;
   let quotaCalls = 0;
   let resolveSecondQuota;
+  let movedCallback;
+  let edgeMoveCallback;
+  let edgeLeaveCallback;
+  const edgeCommands = [];
   const intervalMs = [];
   const themeChoices = ["violet", "blue", "mint", "amber"].map((theme) => {
     const choice = new FakeElement();
@@ -128,7 +134,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   };
   let savedTheme;
   const connected = { qoder: false, trae: false };
-  globalThis.localStorage = { getItem: () => null, setItem: (_key, value) => { savedTheme = value; } };
+  globalThis.localStorage = { getItem: (key) => key === "quota-halo-display-mode" ? "compact" : null, setItem: (_key, value) => { savedTheme = value; } };
   globalThis.window = {
     innerWidth: 290,
     __TAURI__: {
@@ -148,11 +154,17 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
           ? Promise.resolve(connected.qoder ? { status: "ready", remaining: 1280, total: 2000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请连接 Qoder 账号" })
           : command === "refresh_trae"
             ? Promise.resolve(connected.trae ? { status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请登录 TRAE 账号" })
+        : command === "snap_edge_peek"
+          ? (edgeCommands.push({ command, args }), Promise.resolve("left"))
+        : command === "collapse_edge_peek"
+          ? (edgeCommands.push({ command, args }), Promise.resolve())
+        : command === "expand_edge_peek"
+          ? (edgeCommands.push({ command, args }), Promise.resolve())
         : command === "refresh_quota" && verifyRefreshRetention && quotaCalls++ > 0
           ? new Promise((resolve) => { resolveSecondQuota = resolve; })
           : invoke(command, args) },
       event: { listen: async () => {} },
-      window: { getCurrentWindow: () => ({ startDragging: async () => {} }) },
+      window: { getCurrentWindow: () => ({ startDragging: async () => {}, onMoved: async (callback) => { movedCallback = callback; } }) },
     },
     addEventListener() {},
   };
@@ -161,6 +173,14 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     return 0;
   };
   globalThis.setTimeout = (callback, milliseconds) => {
+    if (milliseconds === 180) {
+      edgeMoveCallback = callback;
+      return 2;
+    }
+    if (milliseconds === 350) {
+      edgeLeaveCallback = callback;
+      return 3;
+    }
     deadlineCallback = callback;
     deadlineMs = milliseconds;
     return 1;
@@ -169,6 +189,26 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
 
   const moduleUrl = `${pathToFileURL(resolve("src/main.js")).href}?test=${name}`;
   await import(moduleUrl);
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: fresh launch should default to full mode`);
+  elements.get("#compact-toggle").listeners.get("click")();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode could not be enabled`);
+  assert.equal(typeof movedCallback, "function", `${name}: window movement was not observed for edge peek`);
+  movedCallback();
+  edgeMoveCallback();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: stopped window movement did not enter edge peek`);
+  elements.get("#edge-peek").listeners.get("mouseenter")();
+  await Promise.resolve();
+  assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: hover expansion kept compact content hidden`);
+  assert.equal(typeof elements.get(".panel").listeners.get("mouseleave"), "function", `${name}: edge peek collapse is not bound to the stable panel boundary`);
+  elements.get(".panel").listeners.get("mouseleave")();
+  edgeLeaveCallback();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: leaving expanded compact mode did not restore edge peek`);
+  assert.deepEqual(edgeCommands.slice(-1), [{ command: "collapse_edge_peek", args: { direction: "left" } }], `${name}: expanded edge changed direction or re-ran edge detection`);
+  elements.get("#exit-compact").listeners.get("click")();
   await Promise.resolve();
   assert.ok(intervalMs.includes(180_000), `${name}: automatic refresh is not three minutes`);
   assert.equal(globalThis.document.body.dataset.theme, "", `${name}: violet should be the default skin`);
@@ -195,6 +235,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   elements.get("#compact-toggle").listeners.get("click")();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode was not enabled`);
+  assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: ordinary compact mode was incorrectly marked as edge peek`);
   assert.equal(elements.get("#mini-content").hidden, false, `${name}: compact content was not shown`);
   elements.get("#exit-compact").listeners.get("click")();
   await Promise.resolve();
@@ -246,7 +287,7 @@ await runScenario(
 
 const styles = await readFile(resolve("src/styles.css"), "utf8");
 const markup = await readFile(resolve("src/index.html"), "utf8");
-assert.match(styles, /\.panel \{[^}]*border-radius:16px/);
+assert.match(styles, /\.panel \{[^}]*border-radius:10px/);
 assert.match(styles, /\.panel \{[^}]*border:0/);
 assert.match(styles, /\.settings-panel \{ position:absolute; inset:0 0 42px/);
 assert.match(styles, /\.settings-content:hover::-webkit-scrollbar-thumb \{ background:var\(--soft-border\)/);
@@ -255,6 +296,8 @@ assert.match(styles, /\.theme-choice\[data-theme="violet"\] i \{ background:#bc5
 assert.match(markup, /距离重置还剩/);
 assert.match(styles, /\.qoder-mark::before \{[^}]*mask:url\("\.\/qoder-color\.svg"\)/);
 assert.match(markup, /<img src="\.\/workbuddy\.svg" alt=""/);
+assert.match(styles, /\.edge-peek \{[^}]*border-radius:10px/);
+assert.match(styles, /\.edge-peek span \{[^}]*border-radius:999px/);
 
 const failed = await runScenario("rpc-error", async () => ({
   status: "unavailable",

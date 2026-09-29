@@ -19,8 +19,8 @@ use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -36,7 +36,10 @@ const FULL_WINDOW_WIDTH: f64 = 290.0;
 const FULL_WINDOW_HEIGHT: f64 = 515.0;
 const COMPACT_WINDOW_WIDTH: f64 = 135.0;
 const COMPACT_WINDOW_HEIGHT: f64 = 60.0;
-const WINDOW_CORNER_RADIUS: f64 = 16.0;
+const EDGE_PEEK_THICKNESS: f64 = 20.0;
+const EDGE_SNAP_THRESHOLD: f64 = 24.0;
+const EDGE_PEEK_CORNER_RADIUS: f64 = 10.0;
+const WINDOW_CORNER_RADIUS: f64 = 10.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -756,6 +759,186 @@ fn set_widget_mode(minimal: bool, window: WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
+fn edge_peek_direction(window: &WebviewWindow) -> Option<&'static str> {
+    let position = window.outer_position().ok()?;
+    let monitor = window.current_monitor().ok()??;
+    let scale = window.scale_factor().ok()?;
+    let threshold = (EDGE_SNAP_THRESHOLD * scale).round() as i32;
+    let size = window.outer_size().ok()?;
+    let (area_position, area_size) = edge_peek_detection_area(
+        *monitor.position(),
+        *monitor.size(),
+        monitor.work_area().position,
+        monitor.work_area().size,
+    );
+    edge_peek_direction_for(position, size, area_position, area_size, threshold)
+}
+
+fn edge_peek_detection_area(
+    _monitor_position: PhysicalPosition<i32>,
+    _monitor_size: PhysicalSize<u32>,
+    work_area_position: PhysicalPosition<i32>,
+    work_area_size: PhysicalSize<u32>,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+    (work_area_position, work_area_size)
+}
+
+fn edge_peek_direction_for(
+    position: PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+    monitor_position: PhysicalPosition<i32>,
+    monitor_size: tauri::PhysicalSize<u32>,
+    threshold: i32,
+) -> Option<&'static str> {
+    let right = monitor_position.x + monitor_size.width as i32;
+    let win_right = position.x + size.width as i32;
+    // Distance is negative when the window edge has passed the work-area border
+    // (i.e. part of the window is off-screen), positive when it is merely near.
+    // Activate when the edge is within `threshold` of the border OR has already
+    // crossed it, as long as the window has not completely flown past the screen.
+    let full_w = size.width as i32;
+    let full_h = size.height as i32;
+    let left_dist = position.x - monitor_position.x;
+    let right_dist = right - win_right;
+    let top_dist = position.y - monitor_position.y;
+    [
+        ("left", left_dist, full_w),
+        ("right", right_dist, full_w),
+        ("top", top_dist, full_h),
+    ]
+    .into_iter()
+    .filter(|(_, dist, max)| *dist <= threshold && *dist >= -*max)
+    .min_by_key(|(_, dist, _)| *dist)
+    .map(|(direction, _, _)| direction)
+}
+
+fn edge_peek_position(
+    direction: &str,
+    position: PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+    monitor_position: PhysicalPosition<i32>,
+    monitor_size: tauri::PhysicalSize<u32>,
+) -> PhysicalPosition<i32> {
+    let max_x = monitor_position.x + monitor_size.width as i32 - size.width as i32;
+    let max_y = monitor_position.y + monitor_size.height as i32 - size.height as i32;
+    let x = match direction {
+        "left" => monitor_position.x,
+        "right" => max_x,
+        _ => position.x.clamp(monitor_position.x, max_x),
+    };
+    let y = match direction {
+        "top" => monitor_position.y,
+        _ => position.y.clamp(monitor_position.y, max_y),
+    };
+    PhysicalPosition::new(x, y)
+}
+
+fn edge_peek_size(direction: &str, scale: f64) -> PhysicalSize<u32> {
+    let width = if matches!(direction, "left" | "right") {
+        EDGE_PEEK_THICKNESS
+    } else {
+        COMPACT_WINDOW_WIDTH
+    };
+    let height = if direction == "top" {
+        EDGE_PEEK_THICKNESS
+    } else {
+        COMPACT_WINDOW_HEIGHT
+    };
+    PhysicalSize::new(
+        (width * scale).round().max(1.0) as u32,
+        (height * scale).round().max(1.0) as u32,
+    )
+}
+
+fn compact_window_size(scale: f64) -> PhysicalSize<u32> {
+    PhysicalSize::new(
+        (COMPACT_WINDOW_WIDTH * scale).round().max(1.0) as u32,
+        (COMPACT_WINDOW_HEIGHT * scale).round().max(1.0) as u32,
+    )
+}
+
+fn is_edge_peek_size(size: PhysicalSize<u32>, scale: f64) -> bool {
+    let thickness = (EDGE_PEEK_THICKNESS * scale).round().max(1.0) as i64;
+    (size.width as i64 - thickness).abs() <= 2 || (size.height as i64 - thickness).abs() <= 2
+}
+
+fn edge_peek_expanded_position(
+    direction: &str,
+    position: PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+    monitor_position: PhysicalPosition<i32>,
+    monitor_size: tauri::PhysicalSize<u32>,
+) -> PhysicalPosition<i32> {
+    let max_x = monitor_position.x + monitor_size.width as i32 - size.width as i32;
+    let max_y = monitor_position.y + monitor_size.height as i32 - size.height as i32;
+    let x = match direction {
+        "left" => monitor_position.x,
+        "right" => max_x,
+        _ => position.x.clamp(monitor_position.x, max_x),
+    };
+    let y = match direction {
+        "top" => monitor_position.y,
+        _ => position.y.clamp(monitor_position.y, max_y),
+    };
+    PhysicalPosition::new(x, y)
+}
+
+#[tauri::command]
+fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
+    let Some(direction) = edge_peek_direction(&window) else {
+        return Ok(None);
+    };
+    collapse_edge_peek_to(direction, &window)?;
+    Ok(Some(direction.to_owned()))
+}
+
+fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), String> {
+    if !matches!(direction, "left" | "right" | "top") {
+        return Err("无法识别边缘吸附方向。".to_owned());
+    }
+    let monitor = window
+        .current_monitor()
+        .map_err(|_| "无法读取显示器区域。")?
+        .ok_or("无法读取显示器区域。")?;
+    let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
+    let size = edge_peek_size(direction, scale);
+    let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
+    let area = monitor.work_area();
+    let target = edge_peek_position(direction, position, size, area.position, area.size);
+    set_window_pos_and_size(window, target, size);
+    // In edge peek mode the window is a thin bar.  We skip the Win32 rounded
+    // region entirely and let CSS border-radius + overflow:hidden handle the
+    // visual rounding.  This avoids the mismatch between elliptic
+    // CreateRoundRectRgn corners and CSS circular corners that produced a
+    // visible seam along the screen-facing edge.
+    #[cfg(target_os = "windows")]
+    apply_square_region(&window);
+    Ok(())
+}
+
+#[tauri::command]
+fn collapse_edge_peek(direction: String, window: WebviewWindow) -> Result<(), String> {
+    collapse_edge_peek_to(direction.as_str(), &window)
+}
+
+#[tauri::command]
+fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|_| "无法读取显示器区域。")?
+        .ok_or("无法读取显示器区域。")?;
+    let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
+    let size = compact_window_size(scale);
+    let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
+    let area = monitor.work_area();
+    let target =
+        edge_peek_expanded_position(direction.as_str(), position, size, area.position, area.size);
+    set_window_pos_and_size(&window, target, size);
+    #[cfg(target_os = "windows")]
+    apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
+    Ok(())
+}
+
 #[tauri::command]
 fn set_main_window_size(width: f64, height: f64, window: WebviewWindow) -> Result<(), String> {
     let width = width.clamp(180.0, 2_000.0);
@@ -832,10 +1015,11 @@ fn apply_rounded_region(
     width: u32,
     height: u32,
     scale_factor: f64,
+    radius: f64,
 ) {
     use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
 
-    let diameter = ((WINDOW_CORNER_RADIUS * scale_factor).round() as i32 * 2).max(2);
+    let diameter = ((radius * scale_factor).round() as i32 * 2).max(2);
     let region =
         unsafe { CreateRoundRectRgn(0, 0, width as i32, height as i32, diameter, diameter) };
     if region.is_null() {
@@ -847,14 +1031,64 @@ fn apply_rounded_region(
     }
 }
 
+/// Apply a plain rectangular region (no rounded corners) so that CSS
+/// border-radius + overflow:hidden is the sole source of visual rounding.
 #[cfg(target_os = "windows")]
-fn apply_rounded_window_region(window: &WebviewWindow) {
+fn apply_square_region(window: &WebviewWindow) {
+    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn};
+    let (Ok(hwnd), Ok(size)) = (window.hwnd(), window.outer_size()) else {
+        return;
+    };
+    let region = unsafe { CreateRectRgn(0, 0, size.width as i32, size.height as i32) };
+    if region.is_null() {
+        return;
+    }
+    let result = unsafe { SetWindowRgn(hwnd.0, region, 1) };
+    if result == 0 {
+        unsafe { DeleteObject(region) };
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn apply_rounded_window_region(window: &WebviewWindow, radius: f64) {
     let (Ok(hwnd), Ok(size), Ok(scale_factor)) =
         (window.hwnd(), window.outer_size(), window.scale_factor())
     else {
         return;
     };
-    apply_rounded_region(hwnd.0, size.width, size.height, scale_factor);
+    apply_rounded_region(hwnd.0, size.width, size.height, scale_factor, radius);
+}
+
+/// Atomically set both position and size to avoid intermediate `onMoved` events
+/// that fire between separate `set_size` and `set_position` calls.
+fn set_window_pos_and_size(
+    window: &WebviewWindow,
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::{
+            Foundation::HWND,
+            UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER},
+        };
+        if let Ok(hwnd) = window.hwnd() {
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd.0,
+                    0 as HWND,
+                    position.x,
+                    position.y,
+                    size.width as i32,
+                    size.height as i32,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            return;
+        }
+    }
+    let _ = window.set_size(size);
+    let _ = window.set_position(position);
 }
 
 fn main() {
@@ -899,7 +1133,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
                 position_panel(&window);
-                apply_rounded_window_region(&window);
+                apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
             }
             Ok(())
         })
@@ -909,7 +1143,32 @@ fn main() {
                 if let (Ok(hwnd), Ok(size), Ok(scale_factor)) =
                     (window.hwnd(), window.outer_size(), window.scale_factor())
                 {
-                    apply_rounded_region(hwnd.0, size.width, size.height, scale_factor);
+                    let radius = if is_edge_peek_size(size, scale_factor) {
+                        EDGE_PEEK_CORNER_RADIUS
+                    } else {
+                        WINDOW_CORNER_RADIUS
+                    };
+                    // In edge peek mode, use a plain rectangular region so CSS
+                    // border-radius is the sole source of visual rounding.
+                    if is_edge_peek_size(size, scale_factor) {
+                        use windows_sys::Win32::Graphics::Gdi::{
+                            CreateRectRgn, SetWindowRgn,
+                        };
+                        let region = unsafe {
+                            CreateRectRgn(0, 0, size.width as i32, size.height as i32)
+                        };
+                        if !region.is_null() {
+                            let _ = unsafe { SetWindowRgn(hwnd.0, region, 1) };
+                        }
+                    } else {
+                        apply_rounded_region(
+                            hwnd.0,
+                            size.width,
+                            size.height,
+                            scale_factor,
+                            radius,
+                        );
+                    }
                 }
             }
             if window.label() == "main" {
@@ -937,6 +1196,9 @@ fn main() {
             hide_panel,
             quit_app,
             set_widget_mode,
+            snap_edge_peek,
+            collapse_edge_peek,
+            expand_edge_peek,
             set_main_window_size,
             set_window_opacity,
             open_usage_page
@@ -1066,6 +1328,131 @@ mod tests {
         let compact = widget_size(true);
         assert_eq!((full.width, full.height), (290.0, 515.0));
         assert_eq!((compact.width, compact.height), (135.0, 60.0));
+    }
+
+    #[test]
+    fn edge_peek_stays_visible_and_preserves_position_along_the_screen_edge() {
+        let full_size = tauri::PhysicalSize::new(135, 60);
+        let monitor_position = PhysicalPosition::new(0, 0);
+        let monitor_size = tauri::PhysicalSize::new(1920, 1080);
+        assert_eq!(edge_peek_size("left", 1.0), PhysicalSize::new(20, 60));
+        assert_eq!(edge_peek_size("right", 1.0), PhysicalSize::new(20, 60));
+        assert_eq!(edge_peek_size("top", 1.0), PhysicalSize::new(135, 20));
+        assert_eq!(
+            edge_peek_position(
+                "left",
+                PhysicalPosition::new(0, 320),
+                edge_peek_size("left", 1.0),
+                monitor_position,
+                monitor_size
+            ),
+            PhysicalPosition::new(0, 320)
+        );
+        assert_eq!(
+            edge_peek_position(
+                "right",
+                PhysicalPosition::new(1785, 470),
+                edge_peek_size("right", 1.0),
+                monitor_position,
+                monitor_size
+            ),
+            PhysicalPosition::new(1900, 470)
+        );
+        assert_eq!(
+            edge_peek_position(
+                "top",
+                PhysicalPosition::new(640, 0),
+                edge_peek_size("top", 1.0),
+                monitor_position,
+                monitor_size
+            ),
+            PhysicalPosition::new(640, 0)
+        );
+        assert_eq!(
+            edge_peek_expanded_position(
+                "left",
+                PhysicalPosition::new(0, 320),
+                full_size,
+                monitor_position,
+                monitor_size
+            ),
+            PhysicalPosition::new(0, 320)
+        );
+        assert_eq!(
+            edge_peek_expanded_position(
+                "top",
+                PhysicalPosition::new(640, 0),
+                full_size,
+                monitor_position,
+                monitor_size
+            ),
+            PhysicalPosition::new(640, 0)
+        );
+    }
+
+    #[test]
+    fn edge_snap_threshold_allows_for_invisible_window_borders() {
+        assert_eq!(EDGE_SNAP_THRESHOLD, 24.0);
+    }
+
+    #[test]
+    fn edge_peek_detects_left_right_and_top_but_not_bottom() {
+        let size = tauri::PhysicalSize::new(135, 60);
+        let origin = PhysicalPosition::new(0, 0);
+        let monitor = tauri::PhysicalSize::new(1920, 1080);
+        assert_eq!(
+            edge_peek_direction_for(PhysicalPosition::new(18, 300), size, origin, monitor, 24),
+            Some("left")
+        );
+        assert_eq!(
+            edge_peek_direction_for(PhysicalPosition::new(1767, 420), size, origin, monitor, 24),
+            Some("right")
+        );
+        assert_eq!(
+            edge_peek_direction_for(PhysicalPosition::new(700, 18), size, origin, monitor, 24),
+            Some("top")
+        );
+        assert_eq!(
+            edge_peek_direction_for(PhysicalPosition::new(700, 1020), size, origin, monitor, 24),
+            None
+        );
+    }
+
+    #[test]
+    fn edge_peek_uses_the_windows_work_area_for_side_detection() {
+        let monitor_position = PhysicalPosition::new(0, 0);
+        let monitor_size = PhysicalSize::new(1920, 1080);
+        let work_area_position = PhysicalPosition::new(0, 0);
+        let work_area_size = PhysicalSize::new(1880, 1040);
+        assert_eq!(
+            edge_peek_detection_area(
+                monitor_position,
+                monitor_size,
+                work_area_position,
+                work_area_size
+            ),
+            (work_area_position, work_area_size)
+        );
+        assert_eq!(
+            edge_peek_direction_for(
+                PhysicalPosition::new(1745, 420),
+                PhysicalSize::new(135, 60),
+                work_area_position,
+                work_area_size,
+                24
+            ),
+            Some("right")
+        );
+        assert_eq!(
+            edge_peek_position(
+                "right",
+                PhysicalPosition::new(1745, 420),
+                edge_peek_size("right", 1.0),
+                work_area_position,
+                work_area_size
+            ),
+            PhysicalPosition::new(1860, 420)
+        );
     }
 
     #[test]

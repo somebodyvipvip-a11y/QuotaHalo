@@ -21,6 +21,8 @@ const elements = {
   miniProgress: document.querySelector("#mini-ring-progress"),
   miniCountdown: document.querySelector("#mini-countdown"),
   miniReset: document.querySelector("#mini-reset"),
+  edgePeek: document.querySelector("#edge-peek"),
+  edgePeekProgress: document.querySelector("#edge-peek-progress"),
   exitCompact: document.querySelector("#exit-compact"),
   minimize: document.querySelector("#minimize"),
   closePanel: document.querySelector("#close-panel"),
@@ -64,6 +66,11 @@ let lastSuccessfulSnapshot = null;
 let refreshing = false;
 let settingsViewOpen = false;
 let codexRequestId = 0;
+let edgePeekDirection = null;
+let edgePeekExpanded = false;
+let edgePeekTransitioning = false;
+let edgePeekTimer;
+let edgeMoveTimer;
 const creditSnapshots = {};
 const creditRequestIds = { workbuddy: 0, trae: 0, qoder: 0 };
 const AUTO_REFRESH_INTERVAL_MS = 180_000;
@@ -129,6 +136,12 @@ function applyDisplayMode(compact, persist = true) {
   const enabled = Boolean(compact);
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
+  edgePeekDirection = null;
+  edgePeekExpanded = false;
+  edgePeekTransitioning = false;
+  clearTimeout(edgePeekTimer);
+  elements.edgePeek.hidden = true;
+  delete document.body.dataset.edgePeek;
   if (enabled) {
     setSettingsView(false);
   }
@@ -145,8 +158,22 @@ function setSettingsView(open) {
   if (!settingsViewOpen) syncMainWindowHeight();
 }
 
+async function enterEdgePeekIfNearEdge() {
+  if (document.body.dataset.mode !== "compact" || edgePeekDirection || edgePeekTransitioning) return;
+  edgePeekTransitioning = true;
+  try {
+    const direction = await invoke("snap_edge_peek");
+    if (!direction) return;
+    edgePeekDirection = direction;
+    edgePeekExpanded = false;
+    document.body.dataset.edgePeek = direction;
+    elements.edgePeek.hidden = false;
+  } catch { /* keep normal compact mode */ }
+  finally { edgePeekTransitioning = false; }
+}
+
 try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
-try { applyDisplayMode(localStorage.getItem(MODE_STORAGE_KEY) === "compact", false); } catch { applyDisplayMode(false, false); }
+applyDisplayMode(false, false);
 applyCreditVisibility(creditVisibility, false);
 
 function timezoneLabel() {
@@ -206,6 +233,7 @@ function setPrimaryWindow(quota, state = "ready") {
   elements.miniCountdown.textContent = state === "loading" ? "正在读取" : state === "timeout" ? "读取超时" : remaining === null ? "不可用" : formatMiniCountdown(quota.resets_at);
   elements.primaryReset.textContent = remaining === null ? "—" : `${formatTime(quota.resets_at)} 重置`;
   elements.miniReset.textContent = elements.primaryReset.textContent;
+  elements.edgePeekProgress.style.setProperty("--remaining", `${remaining ?? 0}%`);
 }
 
 function setWeeklyWindow(quota, state = "ready") {
@@ -444,6 +472,73 @@ elements.forgetQoder.addEventListener("click", () => { void forgetService("forge
 elements.forgetTrae.addEventListener("click", () => { void forgetService("forget_trae", "trae"); });
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
+elements.miniContent.addEventListener("mouseup", () => { void enterEdgePeekIfNearEdge(); });
+elements.edgePeek.addEventListener("mouseenter", async () => {
+  if (!edgePeekDirection || edgePeekExpanded || edgePeekTransitioning) return;
+  clearTimeout(edgePeekTimer);
+  edgePeekTransitioning = true;
+  try {
+    // Switch CSS first so the mini-content is visible the instant the window
+    // resizes from 20px to 135px, preventing a flash of the edge-peek bar.
+    delete document.body.dataset.edgePeek;
+    elements.edgePeek.hidden = true;
+    await invoke("expand_edge_peek", { direction: edgePeekDirection });
+    edgePeekExpanded = true;
+  } catch {
+    // Restore edge-peek visuals if the Rust call failed.
+    document.body.dataset.edgePeek = edgePeekDirection;
+    elements.edgePeek.hidden = false;
+  } finally { edgePeekTransitioning = false; }
+});
+const panel = document.querySelector(".panel");
+panel.addEventListener("mouseenter", () => {
+  clearTimeout(edgePeekTimer);
+});
+panel.addEventListener("mouseleave", () => {
+  if (!edgePeekDirection || !edgePeekExpanded || document.body.dataset.mode !== "compact") return;
+  clearTimeout(edgePeekTimer);
+  const direction = edgePeekDirection;
+  edgePeekTimer = setTimeout(async () => {
+    if (edgePeekDirection !== direction || !edgePeekExpanded || edgePeekTransitioning) return;
+    edgePeekTransitioning = true;
+    try {
+      // Resize the window to 20px first, then switch CSS.  In a 20px window
+      // the mini-content is too narrow to be visible, so there is no flash
+      // of compact-mode content before the edge-peek bar appears.
+      await invoke("collapse_edge_peek", { direction });
+      edgePeekExpanded = false;
+      document.body.dataset.edgePeek = direction;
+      elements.edgePeek.hidden = false;
+    } catch { /* keep expanded compact mode */ }
+    finally { edgePeekTransitioning = false; }
+  }, 350);
+});
+elements.edgePeek.addEventListener("mousedown", async () => {
+  if (!edgePeekDirection || edgePeekTransitioning) return;
+  clearTimeout(edgePeekTimer);
+  const direction = edgePeekDirection;
+  edgePeekTransitioning = true;
+  if (!edgePeekExpanded) {
+    // Switch CSS first, then resize – same rationale as mouseenter.
+    delete document.body.dataset.edgePeek;
+    elements.edgePeek.hidden = true;
+    try {
+      await invoke("expand_edge_peek", { direction });
+    } catch {
+      document.body.dataset.edgePeek = direction;
+      elements.edgePeek.hidden = false;
+      edgePeekTransitioning = false;
+      return;
+    }
+  }
+  edgePeekDirection = null;
+  edgePeekExpanded = false;
+  edgePeekTransitioning = false;
+  delete document.body.dataset.edgePeek;
+  elements.edgePeek.hidden = true;
+  await appWindow.startDragging().catch(() => {});
+  void enterEdgePeekIfNearEdge();
+});
 elements.minimize.addEventListener("click", () => {
   void invoke("hide_panel");
 });
@@ -461,11 +556,25 @@ elements.openUsage.addEventListener("click", async () => {
     elements.errorMessage.textContent = "无法打开 ChatGPT 用量页面，请检查系统默认浏览器设置。";
   }
 });
-document.querySelector(".panel").addEventListener("mousedown", (event) => {
+panel.addEventListener("mousedown", (event) => {
   if (event.button !== 0 || !(event.target instanceof Element)) return;
-  if (event.target.closest("button, a, input, textarea, select")) return;
+  if (event.target.closest("button, a, input, textarea, select, label")) return;
+  if (edgePeekDirection) {
+    edgePeekDirection = null;
+    edgePeekExpanded = false;
+    clearTimeout(edgePeekTimer);
+    delete document.body.dataset.edgePeek;
+    elements.edgePeek.hidden = true;
+  }
   void appWindow.startDragging().catch(() => {});
 });
+if (typeof appWindow.onMoved === "function") {
+  void appWindow.onMoved(() => {
+    if (document.body.dataset.mode !== "compact" || edgePeekDirection || edgePeekTransitioning) return;
+    clearTimeout(edgeMoveTimer);
+    edgeMoveTimer = setTimeout(() => { void enterEdgePeekIfNearEdge(); }, 180);
+  });
+}
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (settingsViewOpen) {
