@@ -757,6 +757,15 @@ fn set_widget_mode(minimal: bool, window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_main_window_size(width: f64, height: f64, window: WebviewWindow) -> Result<(), String> {
+    let width = width.clamp(180.0, 2_000.0);
+    let height = height.clamp(330.0, 2_000.0);
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|_| "无法调整 QuotaHalo 窗口大小。".to_owned())
+}
+
+#[tauri::command]
 fn set_window_opacity(opacity: u8, window: WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -928,6 +937,7 @@ fn main() {
             hide_panel,
             quit_app,
             set_widget_mode,
+            set_main_window_size,
             set_window_opacity,
             open_usage_page
         ])

@@ -205,4 +205,7 @@ body[data-mode="compact"] .settings-panel { display: none; }
 .theme-choice:hover,.theme-choice.is-active { border-color:var(--border); }
 .opacity-setting { gap:8px; padding-top:10px; border-top:1px solid var(--soft-border); font-size:10px; }
 .opacity-setting input { height:16px; }
+.credit-visibility-options { display:grid; gap:8px; }
+.credit-visibility-options label { display:flex; align-items:center; gap:8px; color:var(--secondary); font-size:10.5px; cursor:pointer; }
+.credit-visibility-options input { width:14px; height:14px; margin:0; accent-color:var(--accent); }
 body[data-mode="compact"] .settings-panel { display:none; }

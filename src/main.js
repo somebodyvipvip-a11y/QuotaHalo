@@ -31,6 +31,11 @@ const elements = {
   settingsBack: document.querySelector("#settings-back"),
   compactToggle: document.querySelector("#compact-toggle"),
   settingsPanel: document.querySelector("#settings-panel"),
+  panelHeader: document.querySelector(".panel-header"),
+  panelFooter: document.querySelector(".panel-footer"),
+  creditsContent: document.querySelector("#credits-content"),
+  showUnloggedCredits: document.querySelector("#show-unlogged-credits"),
+  creditVisibility: Object.fromEntries(["workbuddy", "trae", "qoder"].map((name) => [name, document.querySelector(`#show-${name}-credit`)])),
   opacity: document.querySelector("#opacity"),
   opacityValue: document.querySelector("#opacity-value"),
   openUsage: document.querySelector("#open-usage"),
@@ -67,8 +72,29 @@ const REFRESH_DEADLINE_MS = 50_500;
 const THEME_STORAGE_KEY = "quota-halo-skin";
 const OPACITY_STORAGE_KEY = "quota-halo-opacity";
 const MODE_STORAGE_KEY = "quota-halo-display-mode";
+const CREDIT_VISIBILITY_STORAGE_KEY = "quota-halo-credit-visibility";
 const THEME_LABELS = { violet: "紫晶", blue: "湛蓝", mint: "青绿", amber: "琥珀" };
 const THEMES = new Set(Object.keys(THEME_LABELS));
+const DEFAULT_CREDIT_VISIBILITY = { showUnlogged: false, workbuddy: true, trae: true, qoder: true };
+
+function readCreditVisibility() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CREDIT_VISIBILITY_STORAGE_KEY) || "null");
+    return { ...DEFAULT_CREDIT_VISIBILITY, ...(stored && typeof stored === "object" ? stored : {}) };
+  } catch { return { ...DEFAULT_CREDIT_VISIBILITY }; }
+}
+
+let creditVisibility = readCreditVisibility();
+
+function applyCreditVisibility(next = creditVisibility, persist = true) {
+  creditVisibility = { ...DEFAULT_CREDIT_VISIBILITY, ...next };
+  elements.showUnloggedCredits.checked = creditVisibility.showUnlogged;
+  Object.entries(elements.creditVisibility).forEach(([name, checkbox]) => { checkbox.checked = creditVisibility[name]; });
+  ["workbuddy", "trae", "qoder"].forEach(renderCreditVisibility);
+  if (persist) {
+    try { localStorage.setItem(CREDIT_VISIBILITY_STORAGE_KEY, JSON.stringify(creditVisibility)); } catch { /* storage unavailable */ }
+  }
+}
 
 function applyTheme(theme, persist = true) {
   const selected = THEMES.has(theme) ? theme : "violet";
@@ -116,10 +142,12 @@ function setSettingsView(open) {
   settingsViewOpen = Boolean(open);
   elements.settingsPanel.hidden = !settingsViewOpen;
   elements.settings.setAttribute("aria-expanded", String(settingsViewOpen));
+  if (!settingsViewOpen) syncMainWindowHeight();
 }
 
 try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
 try { applyDisplayMode(localStorage.getItem(MODE_STORAGE_KEY) === "compact", false); } catch { applyDisplayMode(false, false); }
+applyCreditVisibility(creditVisibility, false);
 
 function timezoneLabel() {
   const minutes = -new Date().getTimezoneOffset();
@@ -227,7 +255,33 @@ function renderCredit(name) {
   view.detail.hidden = ready;
   view.detail.textContent = ready ? "" : data.message || "暂时无法读取";
   view.row.title = ready ? "" : view.detail.textContent;
+  renderCreditVisibility(name);
   renderUpdatedAt();
+}
+
+function isUnloggedCredit(data) {
+  return data?.status === "unavailable" && /请(?:登录|连接)|尚未连接|未连接/.test(data.message || "");
+}
+
+function renderCreditVisibility(name) {
+  const view = elements.credits[name];
+  if (!view) return;
+  const visible = creditVisibility[name] && (creditVisibility.showUnlogged || !isUnloggedCredit(creditSnapshots[name]));
+  view.row.hidden = !visible;
+  const hasVisibleCredit = Object.values(elements.credits).some(({ row }) => !row.hidden);
+  elements.creditsContent.hidden = !hasVisibleCredit;
+  syncMainWindowHeight();
+}
+
+function syncMainWindowHeight() {
+  if (document.body.dataset.mode === "compact" || settingsViewOpen) return;
+  const primaryContent = elements.quotaContent.hidden ? elements.errorContent : elements.quotaContent;
+  const height = (elements.panelHeader?.offsetHeight || 57)
+    + (primaryContent?.offsetHeight || 250)
+    + (elements.creditsContent?.hidden ? 0 : elements.creditsContent?.offsetHeight || 0)
+    + (elements.panelFooter?.offsetHeight || 42) + 3;
+  const width = document.documentElement?.clientWidth || window.innerWidth || 290;
+  void invoke("set_main_window_size", { width, height });
 }
 
 function renderUpdatedAt() {
@@ -373,6 +427,10 @@ elements.settings.addEventListener("click", () => {
 });
 elements.settingsBack.addEventListener("click", () => setSettingsView(false));
 elements.opacity.addEventListener("input", (event) => applyOpacity(event.target.value));
+elements.showUnloggedCredits.addEventListener("change", () => applyCreditVisibility({ ...creditVisibility, showUnlogged: elements.showUnloggedCredits.checked }));
+Object.entries(elements.creditVisibility).forEach(([name, checkbox]) => {
+  checkbox.addEventListener("change", () => applyCreditVisibility({ ...creditVisibility, [name]: checkbox.checked }));
+});
 elements.saveQoder.addEventListener("click", () => { void connectService("connect_qoder", (pat) => ({ pat }), elements.qoderToken, "Qoder"); });
 elements.saveTrae.addEventListener("click", () => { void connectService("save_trae_token", (token) => ({ token }), elements.traeSecret, "TRAE"); });
 elements.loginTrae.addEventListener("click", async () => {

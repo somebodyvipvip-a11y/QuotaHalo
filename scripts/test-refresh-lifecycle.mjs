@@ -73,6 +73,11 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     "#theme-options",
     "#compact-toggle",
     "#settings-panel",
+    "#credits-content",
+    "#show-unlogged-credits",
+    "#show-workbuddy-credit",
+    "#show-trae-credit",
+    "#show-qoder-credit",
     "#opacity",
     "#opacity-value",
     "#open-usage",
@@ -97,6 +102,8 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     '[data-service="trae"]',
     '[data-service="qoder"]',
     ".panel",
+    ".panel-header",
+    ".panel-footer",
   ];
   const elements = new Map(selectors.map((selector) => [selector, new FakeElement()]));
   elements.get("#settings-panel").hidden = true;
@@ -123,6 +130,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   const connected = { qoder: false, trae: false };
   globalThis.localStorage = { getItem: () => null, setItem: (_key, value) => { savedTheme = value; } };
   globalThis.window = {
+    innerWidth: 290,
     __TAURI__: {
       core: { invoke: (command, args) => command === "connection_status"
         ? Promise.resolve({ ...connected })
@@ -205,6 +213,13 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   assert.equal(refresh.attributes.has("aria-busy"), false, `${name}: busy state remains`);
   assert.equal(elements.get("#workbuddy-remaining").textContent, "2,450.5 积分");
   assert.equal(elements.get("#qoder-remaining").textContent, "—");
+  assert.equal(elements.get('[data-service="qoder"]').hidden, true, `${name}: unsigned-in Qoder should be hidden by default`);
+  elements.get("#show-unlogged-credits").checked = true;
+  elements.get("#show-unlogged-credits").listeners.get("change")();
+  assert.equal(elements.get('[data-service="qoder"]').hidden, false, `${name}: unsigned-in Qoder should show when enabled`);
+  elements.get("#show-workbuddy-credit").checked = false;
+  elements.get("#show-workbuddy-credit").listeners.get("change")();
+  assert.equal(elements.get('[data-service="workbuddy"]').hidden, true, `${name}: WorkBuddy should hide when disabled`);
   elements.get("#qoder-token").value = "pt-test-token";
   elements.get("#save-qoder").listeners.get("click")();
   elements.get("#trae-secret").value = "test-secret";

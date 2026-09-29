@@ -59,7 +59,7 @@
         <button id="open-usage" class="usage-button" type="button">打开 ChatGPT 用量页面</button>
       </section>
 
-      <section class="credits-content" aria-label="其他服务积分">
+      <section id="credits-content" class="credits-content" aria-label="其他服务积分">
         <div class="section-caption"><span>积分账户</span><span class="section-rule"></span></div>
         <article class="credit-row" data-service="workbuddy">
           <span class="service-mark workbuddy-mark" aria-hidden="true"><img src="./workbuddy.svg" alt="" /></span>
@@ -141,6 +141,15 @@
                 <button class="theme-choice" type="button" data-theme="amber"><i></i>琥珀</button>
               </div>
               <label class="opacity-setting" for="opacity"><span>透明度 <output id="opacity-value">100%</output></span><input id="opacity" type="range" min="60" max="100" step="5" value="100" /></label>
+            </div>
+          </section>
+          <section class="settings-group" aria-labelledby="credit-visibility-title">
+            <div class="settings-group-heading"><div><h3 id="credit-visibility-title">积分账户显示</h3><p>选择要显示的账户；未登录账户默认隐藏。</p></div></div>
+            <div class="credit-visibility-options">
+              <label><input id="show-unlogged-credits" type="checkbox" />显示未登录的积分账户</label>
+              <label><input id="show-workbuddy-credit" type="checkbox" checked />显示 WorkBuddy</label>
+              <label><input id="show-trae-credit" type="checkbox" checked />显示 TRAE</label>
+              <label><input id="show-qoder-credit" type="checkbox" checked />显示 Qoder</label>
             </div>
           </section>
         </div>
