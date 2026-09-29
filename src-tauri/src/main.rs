@@ -19,8 +19,8 @@ use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -799,20 +799,48 @@ fn edge_peek_position(
     size: tauri::PhysicalSize<u32>,
     monitor_position: PhysicalPosition<i32>,
     monitor_size: tauri::PhysicalSize<u32>,
-    thickness: i32,
 ) -> PhysicalPosition<i32> {
     let max_x = monitor_position.x + monitor_size.width as i32 - size.width as i32;
     let max_y = monitor_position.y + monitor_size.height as i32 - size.height as i32;
     let x = match direction {
-        "left" => monitor_position.x - size.width as i32 + thickness,
-        "right" => monitor_position.x + monitor_size.width as i32 - thickness,
+        "left" => monitor_position.x,
+        "right" => max_x,
         _ => position.x.clamp(monitor_position.x, max_x),
     };
     let y = match direction {
-        "top" => monitor_position.y - size.height as i32 + thickness,
+        "top" => monitor_position.y,
         _ => position.y.clamp(monitor_position.y, max_y),
     };
     PhysicalPosition::new(x, y)
+}
+
+fn edge_peek_size(direction: &str, scale: f64) -> PhysicalSize<u32> {
+    let width = if matches!(direction, "left" | "right") {
+        EDGE_PEEK_THICKNESS
+    } else {
+        COMPACT_WINDOW_WIDTH
+    };
+    let height = if direction == "top" {
+        EDGE_PEEK_THICKNESS
+    } else {
+        COMPACT_WINDOW_HEIGHT
+    };
+    PhysicalSize::new(
+        (width * scale).round().max(1.0) as u32,
+        (height * scale).round().max(1.0) as u32,
+    )
+}
+
+fn compact_window_size(scale: f64) -> PhysicalSize<u32> {
+    PhysicalSize::new(
+        (COMPACT_WINDOW_WIDTH * scale).round().max(1.0) as u32,
+        (COMPACT_WINDOW_HEIGHT * scale).round().max(1.0) as u32,
+    )
+}
+
+fn is_edge_peek_size(size: PhysicalSize<u32>, scale: f64) -> bool {
+    let thickness = (EDGE_PEEK_THICKNESS * scale).round().max(1.0) as i64;
+    (size.width as i64 - thickness).abs() <= 2 || (size.height as i64 - thickness).abs() <= 2
 }
 
 fn edge_peek_expanded_position(
@@ -846,8 +874,7 @@ fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
         .map_err(|_| "无法读取显示器区域。")?
         .ok_or("无法读取显示器区域。")?;
     let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
-    let thickness = (EDGE_PEEK_THICKNESS * scale).round() as i32;
-    let size = window.outer_size().map_err(|_| "无法读取窗口大小。")?;
+    let size = edge_peek_size(direction, scale);
     let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
     let target = edge_peek_position(
         direction,
@@ -855,8 +882,10 @@ fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
         size,
         *monitor.position(),
         *monitor.size(),
-        thickness,
     );
+    window
+        .set_size(size)
+        .map_err(|_| "无法收起 QuotaHalo 边缘窗口。")?;
     window
         .set_position(target)
         .map_err(|_| "无法吸附 QuotaHalo 窗口。")?;
@@ -871,7 +900,8 @@ fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), Stri
         .current_monitor()
         .map_err(|_| "无法读取显示器区域。")?
         .ok_or("无法读取显示器区域。")?;
-    let size = window.outer_size().map_err(|_| "无法读取窗口大小。")?;
+    let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
+    let size = compact_window_size(scale);
     let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
     let target = edge_peek_expanded_position(
         direction.as_str(),
@@ -880,6 +910,9 @@ fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), Stri
         *monitor.position(),
         *monitor.size(),
     );
+    window
+        .set_size(size)
+        .map_err(|_| "无法展开 QuotaHalo 窗口。".to_owned())?;
     window
         .set_position(target)
         .map_err(|_| "无法展开 QuotaHalo 窗口。".to_owned())?;
@@ -1042,13 +1075,12 @@ fn main() {
                 if let (Ok(hwnd), Ok(size), Ok(scale_factor)) =
                     (window.hwnd(), window.outer_size(), window.scale_factor())
                 {
-                    apply_rounded_region(
-                        hwnd.0,
-                        size.width,
-                        size.height,
-                        scale_factor,
-                        WINDOW_CORNER_RADIUS,
-                    );
+                    let radius = if is_edge_peek_size(size, scale_factor) {
+                        EDGE_PEEK_CORNER_RADIUS
+                    } else {
+                        WINDOW_CORNER_RADIUS
+                    };
+                    apply_rounded_region(hwnd.0, size.width, size.height, scale_factor, radius);
                 }
             }
             if window.label() == "main" {
@@ -1210,29 +1242,30 @@ mod tests {
     }
 
     #[test]
-    fn edge_peek_preserves_position_along_the_screen_edge() {
-        let size = tauri::PhysicalSize::new(135, 60);
+    fn edge_peek_stays_visible_and_preserves_position_along_the_screen_edge() {
+        let full_size = tauri::PhysicalSize::new(135, 60);
         let monitor_position = PhysicalPosition::new(0, 0);
         let monitor_size = tauri::PhysicalSize::new(1920, 1080);
+        assert_eq!(edge_peek_size("left", 1.0), PhysicalSize::new(20, 60));
+        assert_eq!(edge_peek_size("right", 1.0), PhysicalSize::new(20, 60));
+        assert_eq!(edge_peek_size("top", 1.0), PhysicalSize::new(135, 20));
         assert_eq!(
             edge_peek_position(
                 "left",
                 PhysicalPosition::new(0, 320),
-                size,
+                edge_peek_size("left", 1.0),
                 monitor_position,
-                monitor_size,
-                20
+                monitor_size
             ),
-            PhysicalPosition::new(-115, 320)
+            PhysicalPosition::new(0, 320)
         );
         assert_eq!(
             edge_peek_position(
                 "right",
                 PhysicalPosition::new(1785, 470),
-                size,
+                edge_peek_size("right", 1.0),
                 monitor_position,
-                monitor_size,
-                20
+                monitor_size
             ),
             PhysicalPosition::new(1900, 470)
         );
@@ -1240,18 +1273,17 @@ mod tests {
             edge_peek_position(
                 "top",
                 PhysicalPosition::new(640, 0),
-                size,
+                edge_peek_size("top", 1.0),
                 monitor_position,
-                monitor_size,
-                20
+                monitor_size
             ),
-            PhysicalPosition::new(640, -40)
+            PhysicalPosition::new(640, 0)
         );
         assert_eq!(
             edge_peek_expanded_position(
                 "left",
-                PhysicalPosition::new(-115, 320),
-                size,
+                PhysicalPosition::new(0, 320),
+                full_size,
                 monitor_position,
                 monitor_size
             ),
@@ -1260,8 +1292,8 @@ mod tests {
         assert_eq!(
             edge_peek_expanded_position(
                 "top",
-                PhysicalPosition::new(640, -40),
-                size,
+                PhysicalPosition::new(640, 0),
+                full_size,
                 monitor_position,
                 monitor_size
             ),

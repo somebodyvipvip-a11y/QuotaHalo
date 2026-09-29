@@ -484,13 +484,17 @@ elements.miniContent.addEventListener("mouseleave", () => {
     } catch { /* keep expanded compact mode */ }
   }, 350);
 });
-elements.edgePeek.addEventListener("mousedown", () => {
+elements.edgePeek.addEventListener("mousedown", async () => {
   if (!edgePeekDirection) return;
-  void invoke("expand_edge_peek", { direction: edgePeekDirection });
+  try {
+    await invoke("expand_edge_peek", { direction: edgePeekDirection });
+  } catch {
+    return;
+  }
   edgePeekDirection = null;
   delete document.body.dataset.edgePeek;
   elements.edgePeek.hidden = true;
-  void appWindow.startDragging().catch(() => {});
+  await appWindow.startDragging().catch(() => {});
 });
 elements.minimize.addEventListener("click", () => {
   void invoke("hide_panel");
