@@ -287,7 +287,7 @@ await runScenario(
 
 const styles = await readFile(resolve("src/styles.css"), "utf8");
 const markup = await readFile(resolve("src/index.html"), "utf8");
-assert.match(styles, /\.panel \{[^}]*border-radius:16px/);
+assert.match(styles, /\.panel \{[^}]*border-radius:10px/);
 assert.match(styles, /\.panel \{[^}]*border:0/);
 assert.match(styles, /\.settings-panel \{ position:absolute; inset:0 0 42px/);
 assert.match(styles, /\.settings-content:hover::-webkit-scrollbar-thumb \{ background:var\(--soft-border\)/);
@@ -296,7 +296,7 @@ assert.match(styles, /\.theme-choice\[data-theme="violet"\] i \{ background:#bc5
 assert.match(markup, /距离重置还剩/);
 assert.match(styles, /\.qoder-mark::before \{[^}]*mask:url\("\.\/qoder-color\.svg"\)/);
 assert.match(markup, /<img src="\.\/workbuddy\.svg" alt=""/);
-assert.match(styles, /\.edge-peek \{[^}]*border-radius:5px/);
+assert.match(styles, /\.edge-peek \{[^}]*border-radius:10px/);
 assert.match(styles, /\.edge-peek span \{[^}]*border-radius:999px/);
 
 const failed = await runScenario("rpc-error", async () => ({

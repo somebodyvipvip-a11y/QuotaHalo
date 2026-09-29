@@ -38,8 +38,8 @@ const COMPACT_WINDOW_WIDTH: f64 = 135.0;
 const COMPACT_WINDOW_HEIGHT: f64 = 60.0;
 const EDGE_PEEK_THICKNESS: f64 = 20.0;
 const EDGE_SNAP_THRESHOLD: f64 = 24.0;
-const EDGE_PEEK_CORNER_RADIUS: f64 = 5.0;
-const WINDOW_CORNER_RADIUS: f64 = 16.0;
+const EDGE_PEEK_CORNER_RADIUS: f64 = 10.0;
+const WINDOW_CORNER_RADIUS: f64 = 10.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -791,15 +791,25 @@ fn edge_peek_direction_for(
     threshold: i32,
 ) -> Option<&'static str> {
     let right = monitor_position.x + monitor_size.width as i32;
+    let win_right = position.x + size.width as i32;
+    // Distance is negative when the window edge has passed the work-area border
+    // (i.e. part of the window is off-screen), positive when it is merely near.
+    // Activate when the edge is within `threshold` of the border OR has already
+    // crossed it by up to half the window size.
+    let half_w = size.width as i32 / 2;
+    let half_h = size.height as i32 / 2;
+    let left_dist = position.x - monitor_position.x;
+    let right_dist = right - win_right;
+    let top_dist = position.y - monitor_position.y;
     [
-        ("left", (position.x - monitor_position.x).abs()),
-        ("right", (position.x + size.width as i32 - right).abs()),
-        ("top", (position.y - monitor_position.y).abs()),
+        ("left", left_dist, half_w),
+        ("right", right_dist, half_w),
+        ("top", top_dist, half_h),
     ]
     .into_iter()
-    .filter(|(_, distance)| *distance <= threshold)
-    .min_by_key(|(_, distance)| *distance)
-    .map(|(direction, _)| direction)
+    .filter(|(_, dist, max)| *dist <= threshold && *dist >= -*max)
+    .min_by_key(|(_, dist, _)| *dist)
+    .map(|(direction, _, _)| direction)
 }
 
 fn edge_peek_position(
@@ -896,8 +906,13 @@ fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), 
     let area = monitor.work_area();
     let target = edge_peek_position(direction, position, size, area.position, area.size);
     set_window_pos_and_size(window, target, size);
+    // In edge peek mode the window is a thin bar.  We skip the Win32 rounded
+    // region entirely and let CSS border-radius + overflow:hidden handle the
+    // visual rounding.  This avoids the mismatch between elliptic
+    // CreateRoundRectRgn corners and CSS circular corners that produced a
+    // visible seam along the screen-facing edge.
     #[cfg(target_os = "windows")]
-    apply_rounded_window_region(&window, EDGE_PEEK_CORNER_RADIUS);
+    apply_square_region(&window);
     Ok(())
 }
 
@@ -1016,6 +1031,24 @@ fn apply_rounded_region(
     }
 }
 
+/// Apply a plain rectangular region (no rounded corners) so that CSS
+/// border-radius + overflow:hidden is the sole source of visual rounding.
+#[cfg(target_os = "windows")]
+fn apply_square_region(window: &WebviewWindow) {
+    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn};
+    let (Ok(hwnd), Ok(size)) = (window.hwnd(), window.outer_size()) else {
+        return;
+    };
+    let region = unsafe { CreateRectRgn(0, 0, size.width as i32, size.height as i32) };
+    if region.is_null() {
+        return;
+    }
+    let result = unsafe { SetWindowRgn(hwnd.0, region, 1) };
+    if result == 0 {
+        unsafe { DeleteObject(region) };
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn apply_rounded_window_region(window: &WebviewWindow, radius: f64) {
     let (Ok(hwnd), Ok(size), Ok(scale_factor)) =
@@ -1115,7 +1148,27 @@ fn main() {
                     } else {
                         WINDOW_CORNER_RADIUS
                     };
-                    apply_rounded_region(hwnd.0, size.width, size.height, scale_factor, radius);
+                    // In edge peek mode, use a plain rectangular region so CSS
+                    // border-radius is the sole source of visual rounding.
+                    if is_edge_peek_size(size, scale_factor) {
+                        use windows_sys::Win32::Graphics::Gdi::{
+                            CreateRectRgn, SetWindowRgn,
+                        };
+                        let region = unsafe {
+                            CreateRectRgn(0, 0, size.width as i32, size.height as i32)
+                        };
+                        if !region.is_null() {
+                            let _ = unsafe { SetWindowRgn(hwnd.0, region, 1) };
+                        }
+                    } else {
+                        apply_rounded_region(
+                            hwnd.0,
+                            size.width,
+                            size.height,
+                            scale_factor,
+                            radius,
+                        );
+                    }
                 }
             }
             if window.label() == "main" {
