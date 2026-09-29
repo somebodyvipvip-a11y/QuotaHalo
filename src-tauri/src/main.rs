@@ -795,16 +795,16 @@ fn edge_peek_direction_for(
     // Distance is negative when the window edge has passed the work-area border
     // (i.e. part of the window is off-screen), positive when it is merely near.
     // Activate when the edge is within `threshold` of the border OR has already
-    // crossed it by up to half the window size.
-    let half_w = size.width as i32 / 2;
-    let half_h = size.height as i32 / 2;
+    // crossed it, as long as the window has not completely flown past the screen.
+    let full_w = size.width as i32;
+    let full_h = size.height as i32;
     let left_dist = position.x - monitor_position.x;
     let right_dist = right - win_right;
     let top_dist = position.y - monitor_position.y;
     [
-        ("left", left_dist, half_w),
-        ("right", right_dist, half_w),
-        ("top", top_dist, half_h),
+        ("left", left_dist, full_w),
+        ("right", right_dist, full_w),
+        ("top", top_dist, full_h),
     ]
     .into_iter()
     .filter(|(_, dist, max)| *dist <= threshold && *dist >= -*max)
@@ -1070,7 +1070,7 @@ fn set_window_pos_and_size(
     {
         use windows_sys::Win32::{
             Foundation::HWND,
-            UI::WindowsAndMessaging::{SetWindowPos, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOZORDER},
+            UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER},
         };
         if let Ok(hwnd) = window.hwnd() {
             unsafe {
@@ -1081,7 +1081,7 @@ fn set_window_pos_and_size(
                     position.y,
                     size.width as i32,
                     size.height as i32,
-                    SWP_ASYNCWINDOWPOS | SWP_NOZORDER | SWP_NOACTIVATE,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
                 );
             }
             return;

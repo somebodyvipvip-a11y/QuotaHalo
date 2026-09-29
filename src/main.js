@@ -478,12 +478,17 @@ elements.edgePeek.addEventListener("mouseenter", async () => {
   clearTimeout(edgePeekTimer);
   edgePeekTransitioning = true;
   try {
-    await invoke("expand_edge_peek", { direction: edgePeekDirection });
-    edgePeekExpanded = true;
+    // Switch CSS first so the mini-content is visible the instant the window
+    // resizes from 20px to 135px, preventing a flash of the edge-peek bar.
     delete document.body.dataset.edgePeek;
     elements.edgePeek.hidden = true;
-  } catch { /* keep collapsed edge peek */ }
-  finally { edgePeekTransitioning = false; }
+    await invoke("expand_edge_peek", { direction: edgePeekDirection });
+    edgePeekExpanded = true;
+  } catch {
+    // Restore edge-peek visuals if the Rust call failed.
+    document.body.dataset.edgePeek = edgePeekDirection;
+    elements.edgePeek.hidden = false;
+  } finally { edgePeekTransitioning = false; }
 });
 const panel = document.querySelector(".panel");
 panel.addEventListener("mouseenter", () => {
@@ -497,6 +502,9 @@ panel.addEventListener("mouseleave", () => {
     if (edgePeekDirection !== direction || !edgePeekExpanded || edgePeekTransitioning) return;
     edgePeekTransitioning = true;
     try {
+      // Resize the window to 20px first, then switch CSS.  In a 20px window
+      // the mini-content is too narrow to be visible, so there is no flash
+      // of compact-mode content before the edge-peek bar appears.
       await invoke("collapse_edge_peek", { direction });
       edgePeekExpanded = false;
       document.body.dataset.edgePeek = direction;
@@ -511,9 +519,14 @@ elements.edgePeek.addEventListener("mousedown", async () => {
   const direction = edgePeekDirection;
   edgePeekTransitioning = true;
   if (!edgePeekExpanded) {
+    // Switch CSS first, then resize – same rationale as mouseenter.
+    delete document.body.dataset.edgePeek;
+    elements.edgePeek.hidden = true;
     try {
       await invoke("expand_edge_peek", { direction });
     } catch {
+      document.body.dataset.edgePeek = direction;
+      elements.edgePeek.hidden = false;
       edgePeekTransitioning = false;
       return;
     }
@@ -545,7 +558,7 @@ elements.openUsage.addEventListener("click", async () => {
 });
 panel.addEventListener("mousedown", (event) => {
   if (event.button !== 0 || !(event.target instanceof Element)) return;
-  if (event.target.closest("button, a, input, textarea, select")) return;
+  if (event.target.closest("button, a, input, textarea, select, label")) return;
   if (edgePeekDirection) {
     edgePeekDirection = null;
     edgePeekExpanded = false;
