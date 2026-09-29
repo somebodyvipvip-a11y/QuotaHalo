@@ -21,6 +21,8 @@ const elements = {
   miniProgress: document.querySelector("#mini-ring-progress"),
   miniCountdown: document.querySelector("#mini-countdown"),
   miniReset: document.querySelector("#mini-reset"),
+  edgePeek: document.querySelector("#edge-peek"),
+  edgePeekProgress: document.querySelector("#edge-peek-progress"),
   exitCompact: document.querySelector("#exit-compact"),
   minimize: document.querySelector("#minimize"),
   closePanel: document.querySelector("#close-panel"),
@@ -64,6 +66,8 @@ let lastSuccessfulSnapshot = null;
 let refreshing = false;
 let settingsViewOpen = false;
 let codexRequestId = 0;
+let edgePeekDirection = null;
+let edgePeekTimer;
 const creditSnapshots = {};
 const creditRequestIds = { workbuddy: 0, trae: 0, qoder: 0 };
 const AUTO_REFRESH_INTERVAL_MS = 180_000;
@@ -129,6 +133,9 @@ function applyDisplayMode(compact, persist = true) {
   const enabled = Boolean(compact);
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
+  edgePeekDirection = null;
+  elements.edgePeek.hidden = true;
+  document.body.dataset.edgePeek = "";
   if (enabled) {
     setSettingsView(false);
   }
@@ -206,6 +213,7 @@ function setPrimaryWindow(quota, state = "ready") {
   elements.miniCountdown.textContent = state === "loading" ? "正在读取" : state === "timeout" ? "读取超时" : remaining === null ? "不可用" : formatMiniCountdown(quota.resets_at);
   elements.primaryReset.textContent = remaining === null ? "—" : `${formatTime(quota.resets_at)} 重置`;
   elements.miniReset.textContent = elements.primaryReset.textContent;
+  elements.edgePeekProgress.style.setProperty("--remaining", `${remaining ?? 0}%`);
 }
 
 function setWeeklyWindow(quota, state = "ready") {
@@ -444,6 +452,40 @@ elements.forgetQoder.addEventListener("click", () => { void forgetService("forge
 elements.forgetTrae.addEventListener("click", () => { void forgetService("forget_trae", "trae"); });
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
+elements.miniContent.addEventListener("mouseup", async () => {
+  if (document.body.dataset.mode !== "compact") return;
+  try {
+    const direction = await invoke("snap_edge_peek");
+    if (direction) {
+      edgePeekDirection = direction;
+      document.body.dataset.edgePeek = direction;
+      elements.edgePeek.hidden = false;
+    }
+  } catch { /* keep normal compact mode */ }
+});
+elements.edgePeek.addEventListener("mouseenter", () => {
+  if (!edgePeekDirection) return;
+  void invoke("expand_edge_peek", { direction: edgePeekDirection });
+  elements.edgePeek.hidden = true;
+});
+elements.miniContent.addEventListener("mouseleave", () => {
+  if (!edgePeekDirection || document.body.dataset.mode !== "compact") return;
+  clearTimeout(edgePeekTimer);
+  edgePeekTimer = setTimeout(async () => {
+    try {
+      const direction = await invoke("snap_edge_peek");
+      if (direction) elements.edgePeek.hidden = false;
+    } catch { /* keep expanded compact mode */ }
+  }, 350);
+});
+elements.edgePeek.addEventListener("mousedown", () => {
+  if (!edgePeekDirection) return;
+  void invoke("expand_edge_peek", { direction: edgePeekDirection });
+  edgePeekDirection = null;
+  document.body.dataset.edgePeek = "";
+  elements.edgePeek.hidden = true;
+  void appWindow.startDragging().catch(() => {});
+});
 elements.minimize.addEventListener("click", () => {
   void invoke("hide_panel");
 });
