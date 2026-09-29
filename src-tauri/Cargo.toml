@@ -1,6 +1,6 @@
 [package]
 name = "quota-halo"
-version = "0.4.5"
+version = "0.4.6"
 description = "Windows tray app for Codex quota and developer tool credits"
 authors = ["Local user"]
 edition = "2021"
