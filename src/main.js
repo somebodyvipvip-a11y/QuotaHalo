@@ -68,6 +68,7 @@ let settingsViewOpen = false;
 let codexRequestId = 0;
 let edgePeekDirection = null;
 let edgePeekTimer;
+let edgeMoveTimer;
 const creditSnapshots = {};
 const creditRequestIds = { workbuddy: 0, trae: 0, qoder: 0 };
 const AUTO_REFRESH_INTERVAL_MS = 180_000;
@@ -152,8 +153,19 @@ function setSettingsView(open) {
   if (!settingsViewOpen) syncMainWindowHeight();
 }
 
+async function enterEdgePeekIfNearEdge() {
+  if (document.body.dataset.mode !== "compact" || edgePeekDirection) return;
+  try {
+    const direction = await invoke("snap_edge_peek");
+    if (!direction) return;
+    edgePeekDirection = direction;
+    document.body.dataset.edgePeek = direction;
+    elements.edgePeek.hidden = false;
+  } catch { /* keep normal compact mode */ }
+}
+
 try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
-try { applyDisplayMode(localStorage.getItem(MODE_STORAGE_KEY) === "compact", false); } catch { applyDisplayMode(false, false); }
+try { applyDisplayMode(localStorage.getItem(MODE_STORAGE_KEY) !== "full", false); } catch { applyDisplayMode(true, false); }
 applyCreditVisibility(creditVisibility, false);
 
 function timezoneLabel() {
@@ -452,20 +464,11 @@ elements.forgetQoder.addEventListener("click", () => { void forgetService("forge
 elements.forgetTrae.addEventListener("click", () => { void forgetService("forget_trae", "trae"); });
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
-elements.miniContent.addEventListener("mouseup", async () => {
-  if (document.body.dataset.mode !== "compact") return;
-  try {
-    const direction = await invoke("snap_edge_peek");
-    if (direction) {
-      edgePeekDirection = direction;
-      document.body.dataset.edgePeek = direction;
-      elements.edgePeek.hidden = false;
-    }
-  } catch { /* keep normal compact mode */ }
-});
+elements.miniContent.addEventListener("mouseup", () => { void enterEdgePeekIfNearEdge(); });
 elements.edgePeek.addEventListener("mouseenter", () => {
   if (!edgePeekDirection) return;
   void invoke("expand_edge_peek", { direction: edgePeekDirection });
+  delete document.body.dataset.edgePeek;
   elements.edgePeek.hidden = true;
 });
 elements.miniContent.addEventListener("mouseleave", () => {
@@ -474,7 +477,10 @@ elements.miniContent.addEventListener("mouseleave", () => {
   edgePeekTimer = setTimeout(async () => {
     try {
       const direction = await invoke("snap_edge_peek");
-      if (direction) elements.edgePeek.hidden = false;
+      if (direction) {
+        document.body.dataset.edgePeek = direction;
+        elements.edgePeek.hidden = false;
+      }
     } catch { /* keep expanded compact mode */ }
   }, 350);
 });
@@ -508,6 +514,13 @@ document.querySelector(".panel").addEventListener("mousedown", (event) => {
   if (event.target.closest("button, a, input, textarea, select")) return;
   void appWindow.startDragging().catch(() => {});
 });
+if (typeof appWindow.onMoved === "function") {
+  void appWindow.onMoved(() => {
+    if (document.body.dataset.mode !== "compact" || edgePeekDirection) return;
+    clearTimeout(edgeMoveTimer);
+    edgeMoveTimer = setTimeout(() => { void enterEdgePeekIfNearEdge(); }, 180);
+  });
+}
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (settingsViewOpen) {

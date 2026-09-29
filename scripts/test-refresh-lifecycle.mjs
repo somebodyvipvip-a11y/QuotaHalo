@@ -114,6 +114,9 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   let deadlineMs;
   let quotaCalls = 0;
   let resolveSecondQuota;
+  let movedCallback;
+  let edgeMoveCallback;
+  let edgeLeaveCallback;
   const intervalMs = [];
   const themeChoices = ["violet", "blue", "mint", "amber"].map((theme) => {
     const choice = new FakeElement();
@@ -150,11 +153,13 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
           ? Promise.resolve(connected.qoder ? { status: "ready", remaining: 1280, total: 2000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请连接 Qoder 账号" })
           : command === "refresh_trae"
             ? Promise.resolve(connected.trae ? { status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请登录 TRAE 账号" })
+        : command === "snap_edge_peek"
+          ? Promise.resolve("left")
         : command === "refresh_quota" && verifyRefreshRetention && quotaCalls++ > 0
           ? new Promise((resolve) => { resolveSecondQuota = resolve; })
           : invoke(command, args) },
       event: { listen: async () => {} },
-      window: { getCurrentWindow: () => ({ startDragging: async () => {} }) },
+      window: { getCurrentWindow: () => ({ startDragging: async () => {}, onMoved: async (callback) => { movedCallback = callback; } }) },
     },
     addEventListener() {},
   };
@@ -163,6 +168,14 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
     return 0;
   };
   globalThis.setTimeout = (callback, milliseconds) => {
+    if (milliseconds === 180) {
+      edgeMoveCallback = callback;
+      return 2;
+    }
+    if (milliseconds === 350) {
+      edgeLeaveCallback = callback;
+      return 3;
+    }
     deadlineCallback = callback;
     deadlineMs = milliseconds;
     return 1;
@@ -172,6 +185,18 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   const moduleUrl = `${pathToFileURL(resolve("src/main.js")).href}?test=${name}`;
   await import(moduleUrl);
   await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: fresh launch should default to compact mode`);
+  assert.equal(typeof movedCallback, "function", `${name}: window movement was not observed for edge peek`);
+  movedCallback();
+  edgeMoveCallback();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: stopped window movement did not enter edge peek`);
+  elements.get("#edge-peek").listeners.get("mouseenter")();
+  assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: hover expansion kept compact content hidden`);
+  elements.get("#mini-content").listeners.get("mouseleave")();
+  edgeLeaveCallback();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: leaving expanded compact mode did not restore edge peek`);
   assert.ok(intervalMs.includes(180_000), `${name}: automatic refresh is not three minutes`);
   assert.equal(globalThis.document.body.dataset.theme, "", `${name}: violet should be the default skin`);
   if (verifyRefreshRetention) {

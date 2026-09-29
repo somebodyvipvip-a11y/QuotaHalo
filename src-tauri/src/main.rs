@@ -789,8 +789,9 @@ fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
 #[tauri::command]
 fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), String> {
     let monitor = window.current_monitor().map_err(|_| "无法读取显示器区域。")?.ok_or("无法读取显示器区域。")?;
-    let x = match direction.as_str() { "left" => monitor.position().x, "right" => monitor.position().x + monitor.size().width as i32 - COMPACT_WINDOW_WIDTH as i32, _ => monitor.position().x + (monitor.size().width as i32 - COMPACT_WINDOW_WIDTH as i32) / 2 };
-    let y = match direction.as_str() { "top" => monitor.position().y, _ => monitor.position().y + (monitor.size().height as i32 - COMPACT_WINDOW_HEIGHT as i32) / 2 };
+    let size = window.outer_size().map_err(|_| "无法读取窗口大小。")?;
+    let x = match direction.as_str() { "left" => monitor.position().x, "right" => monitor.position().x + monitor.size().width as i32 - size.width as i32, _ => monitor.position().x + (monitor.size().width as i32 - size.width as i32) / 2 };
+    let y = match direction.as_str() { "top" => monitor.position().y, _ => monitor.position().y + (monitor.size().height as i32 - size.height as i32) / 2 };
     window
         .set_position(PhysicalPosition::new(x, y))
         .map_err(|_| "无法展开 QuotaHalo 窗口。".to_owned())
