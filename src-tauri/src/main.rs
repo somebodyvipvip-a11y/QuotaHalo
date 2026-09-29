@@ -32,7 +32,7 @@ use tokio::{
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(50);
 const MAX_SESSION_ATTEMPTS: u8 = 3;
-const FULL_WINDOW_WIDTH: f64 = 330.0;
+const FULL_WINDOW_WIDTH: f64 = 290.0;
 const FULL_WINDOW_HEIGHT: f64 = 515.0;
 const COMPACT_WINDOW_WIDTH: f64 = 135.0;
 const COMPACT_WINDOW_HEIGHT: f64 = 60.0;
@@ -749,6 +749,9 @@ fn set_widget_mode(minimal: bool, window: WebviewWindow) -> Result<(), String> {
     window
         .set_size(widget_size(minimal))
         .map_err(|_| "无法调整 QuotaHalo 窗口大小。")?;
+    window
+        .set_resizable(!minimal)
+        .map_err(|_| "无法更新 QuotaHalo 窗口缩放状态。")?;
     let _ = window.set_position(anchor);
     Ok(())
 }
@@ -1051,7 +1054,7 @@ mod tests {
     fn display_modes_use_logical_dimensions_for_high_dpi_displays() {
         let full = widget_size(false);
         let compact = widget_size(true);
-        assert_eq!((full.width, full.height), (330.0, 515.0));
+        assert_eq!((full.width, full.height), (290.0, 515.0));
         assert_eq!((compact.width, compact.height), (135.0, 60.0));
     }
 
