@@ -895,12 +895,7 @@ fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), 
     let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
     let area = monitor.work_area();
     let target = edge_peek_position(direction, position, size, area.position, area.size);
-    window
-        .set_size(size)
-        .map_err(|_| "无法收起 QuotaHalo 边缘窗口。")?;
-    window
-        .set_position(target)
-        .map_err(|_| "无法吸附 QuotaHalo 窗口。")?;
+    set_window_pos_and_size(window, target, size);
     #[cfg(target_os = "windows")]
     apply_rounded_window_region(&window, EDGE_PEEK_CORNER_RADIUS);
     Ok(())
@@ -923,12 +918,7 @@ fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), Stri
     let area = monitor.work_area();
     let target =
         edge_peek_expanded_position(direction.as_str(), position, size, area.position, area.size);
-    window
-        .set_size(size)
-        .map_err(|_| "无法展开 QuotaHalo 窗口。".to_owned())?;
-    window
-        .set_position(target)
-        .map_err(|_| "无法展开 QuotaHalo 窗口。".to_owned())?;
+    set_window_pos_and_size(&window, target, size);
     #[cfg(target_os = "windows")]
     apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
     Ok(())
@@ -1034,6 +1024,38 @@ fn apply_rounded_window_region(window: &WebviewWindow, radius: f64) {
         return;
     };
     apply_rounded_region(hwnd.0, size.width, size.height, scale_factor, radius);
+}
+
+/// Atomically set both position and size to avoid intermediate `onMoved` events
+/// that fire between separate `set_size` and `set_position` calls.
+fn set_window_pos_and_size(
+    window: &WebviewWindow,
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::{
+            Foundation::HWND,
+            UI::WindowsAndMessaging::{SetWindowPos, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOZORDER},
+        };
+        if let Ok(hwnd) = window.hwnd() {
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd.0,
+                    0 as HWND,
+                    position.x,
+                    position.y,
+                    size.width as i32,
+                    size.height as i32,
+                    SWP_ASYNCWINDOWPOS | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            return;
+        }
+    }
+    let _ = window.set_size(size);
+    let _ = window.set_position(position);
 }
 
 fn main() {

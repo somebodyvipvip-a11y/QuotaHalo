@@ -508,12 +508,15 @@ panel.addEventListener("mouseleave", () => {
 elements.edgePeek.addEventListener("mousedown", async () => {
   if (!edgePeekDirection || edgePeekTransitioning) return;
   clearTimeout(edgePeekTimer);
+  const direction = edgePeekDirection;
   edgePeekTransitioning = true;
-  try {
-    await invoke("expand_edge_peek", { direction: edgePeekDirection });
-  } catch {
-    edgePeekTransitioning = false;
-    return;
+  if (!edgePeekExpanded) {
+    try {
+      await invoke("expand_edge_peek", { direction });
+    } catch {
+      edgePeekTransitioning = false;
+      return;
+    }
   }
   edgePeekDirection = null;
   edgePeekExpanded = false;
@@ -521,6 +524,7 @@ elements.edgePeek.addEventListener("mousedown", async () => {
   delete document.body.dataset.edgePeek;
   elements.edgePeek.hidden = true;
   await appWindow.startDragging().catch(() => {});
+  void enterEdgePeekIfNearEdge();
 });
 elements.minimize.addEventListener("click", () => {
   void invoke("hide_panel");
@@ -542,11 +546,18 @@ elements.openUsage.addEventListener("click", async () => {
 panel.addEventListener("mousedown", (event) => {
   if (event.button !== 0 || !(event.target instanceof Element)) return;
   if (event.target.closest("button, a, input, textarea, select")) return;
+  if (edgePeekDirection) {
+    edgePeekDirection = null;
+    edgePeekExpanded = false;
+    clearTimeout(edgePeekTimer);
+    delete document.body.dataset.edgePeek;
+    elements.edgePeek.hidden = true;
+  }
   void appWindow.startDragging().catch(() => {});
 });
 if (typeof appWindow.onMoved === "function") {
   void appWindow.onMoved(() => {
-    if (document.body.dataset.mode !== "compact" || edgePeekDirection) return;
+    if (document.body.dataset.mode !== "compact" || edgePeekDirection || edgePeekTransitioning) return;
     clearTimeout(edgeMoveTimer);
     edgeMoveTimer = setTimeout(() => { void enterEdgePeekIfNearEdge(); }, 180);
   });
