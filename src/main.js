@@ -321,7 +321,7 @@ function renderCreditVisibility(name) {
 }
 
 function syncMainWindowHeight() {
-  if (document.body.dataset.mode === "compact" || settingsViewOpen) return;
+  if (document.body.dataset.mode === "compact" || settingsViewOpen || edgePeekDirection || edgePeekTransitioning) return;
   const primaryContent = elements.quotaContent.hidden ? elements.errorContent : elements.quotaContent;
   const height = (elements.panelHeader?.offsetHeight || 57)
     + (primaryContent?.offsetHeight || 250)

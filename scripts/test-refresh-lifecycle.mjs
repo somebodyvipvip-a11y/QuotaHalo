@@ -118,6 +118,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   let edgeMoveCallback;
   let edgeLeaveCallback;
   const edgeCommands = [];
+  const resizeCommands = [];
   const intervalMs = [];
   const themeChoices = ["violet", "blue", "mint", "amber"].map((theme) => {
     const choice = new FakeElement();
@@ -139,7 +140,9 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   globalThis.window = {
     innerWidth: 290,
     __TAURI__: {
-      core: { invoke: (command, args) => command === "connection_status"
+      core: { invoke: (command, args) => command === "set_main_window_size"
+        ? (resizeCommands.push({ command, args }), Promise.resolve())
+        : command === "connection_status"
         ? Promise.resolve({ ...connected })
         : command === "connect_qoder"
           ? (connected.qoder = true, Promise.resolve())
@@ -213,6 +216,25 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   edgeLeaveCallback();
   await Promise.resolve();
   assert.deepEqual(edgeCommands.at(-1), { command: "collapse_edge_peek", args: { direction: "left", minimal: false } }, `${name}: full-mode edge peek did not collapse after pointer leave`);
+  resizeCommands.length = 0;
+  elements.get("#show-workbuddy-credit").checked = false;
+  elements.get("#show-workbuddy-credit").listeners.get("change")();
+  assert.equal(resizeCommands.length, 0, `${name}: collapsed full edge peek was resized by background content synchronization`);
+  elements.get("#edge-peek").listeners.get("mouseenter")();
+  await Promise.resolve();
+  resizeCommands.length = 0;
+  elements.get("#show-trae-credit").checked = false;
+  elements.get("#show-trae-credit").listeners.get("change")();
+  assert.equal(resizeCommands.length, 0, `${name}: expanded full edge peek lost its saved size during background content synchronization`);
+  elements.get(".panel").listeners.get("mousedown")({ button: 0, target: dragTarget });
+  resizeCommands.length = 0;
+  elements.get("#show-qoder-credit").checked = false;
+  elements.get("#show-qoder-credit").listeners.get("change")();
+  assert.ok(resizeCommands.length > 0, `${name}: leaving edge peek did not restore ordinary full-mode height synchronization`);
+  ["#show-workbuddy-credit", "#show-trae-credit", "#show-qoder-credit"].forEach((selector) => {
+    elements.get(selector).checked = true;
+    elements.get(selector).listeners.get("change")();
+  });
 
   elements.get("#compact-toggle").listeners.get("click")();
   await Promise.resolve();
