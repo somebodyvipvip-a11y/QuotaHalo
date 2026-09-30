@@ -11,6 +11,7 @@ use std::{
     ffi::OsString,
     fmt, fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -18,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
@@ -40,6 +41,51 @@ const EDGE_PEEK_THICKNESS: f64 = 20.0;
 const EDGE_SNAP_THRESHOLD: f64 = 24.0;
 const EDGE_PEEK_CORNER_RADIUS: f64 = 10.0;
 const WINDOW_CORNER_RADIUS: f64 = 10.0;
+
+#[derive(Debug, PartialEq, Eq)]
+enum TrayClickAction {
+    None,
+    Schedule(u64),
+    DoubleClick,
+}
+
+#[derive(Debug, Default)]
+struct TrayClickState {
+    generation: u64,
+    suppress_next_release: bool,
+}
+
+impl TrayClickState {
+    fn on_left_release(&mut self) -> TrayClickAction {
+        if self.suppress_next_release {
+            self.suppress_next_release = false;
+            return TrayClickAction::None;
+        }
+        self.generation = self.generation.wrapping_add(1);
+        TrayClickAction::Schedule(self.generation)
+    }
+
+    fn on_left_double_click(&mut self) -> TrayClickAction {
+        self.generation = self.generation.wrapping_add(1);
+        self.suppress_next_release = true;
+        TrayClickAction::DoubleClick
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
+    }
+}
+
+fn tray_double_click_delay() -> Duration {
+    #[cfg(target_os = "windows")]
+    {
+        let milliseconds =
+            unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
+        return Duration::from_millis(u64::from(milliseconds.max(1)));
+    }
+    #[cfg(not(target_os = "windows"))]
+    Duration::from_millis(500)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QuotaWindow {
@@ -722,7 +768,6 @@ fn widget_size(minimal: bool) -> LogicalSize<f64> {
 fn show_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_decorations(false);
-        position_panel(&window);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -876,6 +921,17 @@ fn edge_peek_expanded_size(
     }
 }
 
+fn edge_peek_full_size(width: u32, height: u32, scale: f64) -> PhysicalSize<u32> {
+    if width > 0 && height > 0 {
+        PhysicalSize::new(width, height)
+    } else {
+        PhysicalSize::new(
+            (FULL_WINDOW_WIDTH * scale).round().max(1.0) as u32,
+            (FULL_WINDOW_HEIGHT * scale).round().max(1.0) as u32,
+        )
+    }
+}
+
 fn is_edge_peek_size(size: PhysicalSize<u32>, scale: f64) -> bool {
     let thickness = (EDGE_PEEK_THICKNESS * scale).round().max(1.0) as i64;
     (size.width as i64 - thickness).abs() <= 2 || (size.height as i64 - thickness).abs() <= 2
@@ -993,6 +1049,35 @@ fn expand_edge_peek(
     apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
     window
         .set_resizable(!minimal)
+        .map_err(|_| "无法恢复窗口缩放状态。".to_owned())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn expand_edge_peek_to_full(
+    direction: String,
+    width: u32,
+    height: u32,
+    window: WebviewWindow,
+) -> Result<(), String> {
+    if !matches!(direction.as_str(), "left" | "right" | "top") {
+        return Err("无法识别边缘吸附方向。".to_owned());
+    }
+    let monitor = window
+        .current_monitor()
+        .map_err(|_| "无法读取显示器区域。")?
+        .ok_or("无法读取显示器区域。")?;
+    let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
+    let size = edge_peek_full_size(width, height, scale);
+    let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
+    let area = monitor.work_area();
+    let target =
+        edge_peek_expanded_position(direction.as_str(), position, size, area.position, area.size);
+    set_window_pos_and_size(&window, target, size);
+    #[cfg(target_os = "windows")]
+    apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
+    window
+        .set_resizable(true)
         .map_err(|_| "无法恢复窗口缩放状态。".to_owned())?;
     Ok(())
 }
@@ -1163,6 +1248,7 @@ fn main() {
                 .default_window_icon()
                 .cloned()
                 .ok_or("未找到 QuotaHalo 图标资源。")?;
+            let tray_click_state = Arc::new(StdMutex::new(TrayClickState::default()));
             TrayIconBuilder::with_id("quota-clock")
                 .icon(tray_icon)
                 .tooltip("QuotaHalo · 额度光环")
@@ -1177,13 +1263,45 @@ fn main() {
                     "quit" => app.exit(0),
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        ..
-                    } = event
-                    {
-                        toggle_panel(tray.app_handle());
+                .on_tray_icon_event({
+                    let tray_click_state = Arc::clone(&tray_click_state);
+                    move |tray, event| match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            let action = tray_click_state
+                                .lock()
+                                .map(|mut state| state.on_left_release())
+                                .unwrap_or(TrayClickAction::None);
+                            if let TrayClickAction::Schedule(generation) = action {
+                                let app = tray.app_handle().clone();
+                                let state = Arc::clone(&tray_click_state);
+                                tauri::async_runtime::spawn(async move {
+                                    sleep(tray_double_click_delay()).await;
+                                    let is_current = state
+                                        .lock()
+                                        .map(|state| state.is_current(generation))
+                                        .unwrap_or(false);
+                                    if is_current {
+                                        toggle_panel(&app);
+                                    }
+                                });
+                            }
+                        }
+                        TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        } => {
+                            let _ = tray_click_state
+                                .lock()
+                                .map(|mut state| state.on_left_double_click());
+                            let app = tray.app_handle();
+                            show_panel(app);
+                            let _ = app.emit("tray-double-click", ());
+                        }
+                        _ => {}
                     }
                 })
                 .build(app)?;
@@ -1257,6 +1375,7 @@ fn main() {
             snap_edge_peek,
             collapse_edge_peek,
             expand_edge_peek,
+            expand_edge_peek_to_full,
             set_main_window_size,
             set_window_opacity,
             open_usage_page
@@ -1400,6 +1519,32 @@ mod tests {
             edge_peek_expanded_size(false, PhysicalSize::new(0, 0), 1.0),
             PhysicalSize::new(1, 1)
         );
+    }
+
+    #[test]
+    fn tray_click_state_cancels_single_click_when_double_click_arrives() {
+        let mut state = TrayClickState::default();
+        assert_eq!(state.on_left_release(), TrayClickAction::Schedule(1));
+        assert!(state.is_current(1));
+        assert_eq!(state.on_left_double_click(), TrayClickAction::DoubleClick);
+        assert!(!state.is_current(1));
+        assert_eq!(state.on_left_release(), TrayClickAction::None);
+        assert_eq!(state.on_left_release(), TrayClickAction::Schedule(3));
+        assert!(state.is_current(3));
+    }
+
+    #[test]
+    fn tray_double_click_delay_is_never_zero() {
+        assert!(tray_double_click_delay() >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn tray_full_expansion_uses_saved_or_default_size() {
+        assert_eq!(
+            edge_peek_full_size(420, 720, 1.5),
+            PhysicalSize::new(420, 720)
+        );
+        assert_eq!(edge_peek_full_size(0, 0, 1.5), PhysicalSize::new(435, 773));
     }
 
     #[test]

@@ -191,6 +191,34 @@ async function enterEdgePeekIfNearEdge() {
   finally { edgePeekTransitioning = false; }
 }
 
+async function expandEdgePeekToFullFromTray() {
+  if (!edgePeekDirection || !edgePeekExpandedSize || edgePeekTransitioning) return;
+  const direction = edgePeekDirection;
+  const wasExpanded = edgePeekExpanded;
+  const width = edgePeekMinimal ? 0 : edgePeekExpandedSize.width;
+  const height = edgePeekMinimal ? 0 : edgePeekExpandedSize.height;
+  clearTimeout(edgePeekTimer);
+  clearTimeout(edgeMoveTimer);
+  edgePeekTransitioning = true;
+  if (!wasExpanded) {
+    delete document.body.dataset.edgePeek;
+    elements.edgePeek.hidden = true;
+  }
+  try {
+    await invoke("expand_edge_peek_to_full", { direction, width, height });
+    document.body.dataset.mode = "";
+    elements.miniContent.hidden = true;
+    clearEdgePeekState();
+    try { localStorage.setItem(MODE_STORAGE_KEY, "full"); } catch { /* storage unavailable */ }
+  } catch {
+    if (!wasExpanded) {
+      document.body.dataset.edgePeek = direction;
+      elements.edgePeek.hidden = false;
+    }
+    edgePeekTransitioning = false;
+  }
+}
+
 try { applyOpacity(localStorage.getItem(OPACITY_STORAGE_KEY) || 100, false); } catch { applyOpacity(100, false); }
 applyDisplayMode(false, false);
 applyCreditVisibility(creditVisibility, false);
@@ -615,6 +643,7 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
+await listen("tray-double-click", expandEdgePeekToFullFromTray);
 await listen("quota-refresh-request", refresh);
 await listen("trae-auth-complete", () => {
   elements.connectionMessages.trae.textContent = "TRAE 已登录，重新打开软件仍会保持登录";

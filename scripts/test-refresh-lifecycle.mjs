@@ -117,8 +117,10 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   let movedCallback;
   let edgeMoveCallback;
   let edgeLeaveCallback;
+  let failTrayExpansion = false;
   const edgeCommands = [];
   const resizeCommands = [];
+  const eventListeners = new Map();
   const intervalMs = [];
   const themeChoices = ["violet", "blue", "mint", "amber"].map((theme) => {
     const choice = new FakeElement();
@@ -164,10 +166,12 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
           ? (edgeCommands.push({ command, args }), Promise.resolve())
         : command === "expand_edge_peek"
           ? (edgeCommands.push({ command, args }), Promise.resolve())
+        : command === "expand_edge_peek_to_full"
+          ? (edgeCommands.push({ command, args }), failTrayExpansion ? Promise.reject(new Error("tray expansion failed")) : Promise.resolve())
         : command === "refresh_quota" && verifyRefreshRetention && quotaCalls++ > 0
           ? new Promise((resolve) => { resolveSecondQuota = resolve; })
           : invoke(command, args) },
-      event: { listen: async () => {} },
+      event: { listen: async (event, callback) => { eventListeners.set(event, callback); return () => {}; } },
       window: { getCurrentWindow: () => ({ startDragging: async () => {}, onMoved: async (callback) => { movedCallback = callback; } }) },
     },
     addEventListener() {},
@@ -195,6 +199,12 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   await import(moduleUrl);
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "", `${name}: fresh launch should default to full mode`);
+  const trayDoubleClick = eventListeners.get("tray-double-click");
+  assert.equal(typeof trayDoubleClick, "function", `${name}: tray double click was not observed`);
+  const ordinaryDoubleClickCommandCount = edgeCommands.length;
+  await trayDoubleClick();
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: ordinary tray double click changed display mode`);
+  assert.equal(edgeCommands.length, ordinaryDoubleClickCommandCount, `${name}: ordinary tray double click invoked an edge command`);
   assert.equal(typeof movedCallback, "function", `${name}: window movement was not observed for edge peek`);
   movedCallback();
   assert.equal(edgeMoveCallback, undefined, `${name}: programmatic startup movement armed edge peek`);
@@ -220,6 +230,20 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   elements.get("#show-workbuddy-credit").checked = false;
   elements.get("#show-workbuddy-credit").listeners.get("change")();
   assert.equal(resizeCommands.length, 0, `${name}: collapsed full edge peek was resized by background content synchronization`);
+  failTrayExpansion = true;
+  await trayDoubleClick();
+  assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: failed tray expansion discarded edge peek state`);
+  failTrayExpansion = false;
+  await trayDoubleClick();
+  await Promise.resolve();
+  assert.deepEqual(edgeCommands.at(-1), { command: "expand_edge_peek_to_full", args: { direction: "left", width: 290, height: 515 } }, `${name}: tray double click did not restore the saved full-mode size`);
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: tray double click did not switch edge peek to full mode`);
+  assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: tray double click left the full-mode window in edge peek`);
+  assert.equal(savedTheme, "full", `${name}: tray double click did not persist full mode`);
+  elements.get(".panel").listeners.get("mousedown")({ button: 0, target: dragTarget });
+  movedCallback();
+  edgeMoveCallback();
+  await Promise.resolve();
   elements.get("#edge-peek").listeners.get("mouseenter")();
   await Promise.resolve();
   resizeCommands.length = 0;
@@ -248,6 +272,15 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: stopped window movement did not enter edge peek`);
   assert.deepEqual(edgeCommands.at(-1), { command: "snap_edge_peek", args: { minimal: true } }, `${name}: compact edge peek lost its source mode`);
+  await trayDoubleClick();
+  await Promise.resolve();
+  assert.deepEqual(edgeCommands.at(-1), { command: "expand_edge_peek_to_full", args: { direction: "left", width: 0, height: 0 } }, `${name}: compact edge peek did not request the default full-mode size`);
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: compact edge peek tray double click did not switch to full mode`);
+  elements.get("#compact-toggle").listeners.get("click")();
+  elements.get(".panel").listeners.get("mousedown")({ button: 0, target: dragTarget });
+  movedCallback();
+  edgeMoveCallback();
+  await Promise.resolve();
   elements.get("#edge-peek").listeners.get("mouseenter")();
   await Promise.resolve();
   assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: hover expansion kept compact content hidden`);
