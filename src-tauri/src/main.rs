@@ -60,6 +60,13 @@ struct QuotaSnapshot {
     updated_at: Option<i64>,
 }
 
+#[derive(Debug, Serialize)]
+struct EdgePeekSnapshot {
+    direction: String,
+    width: u32,
+    height: u32,
+}
+
 #[derive(Debug, Deserialize)]
 struct RpcEnvelope {
     id: Option<Value>,
@@ -857,6 +864,18 @@ fn compact_window_size(scale: f64) -> PhysicalSize<u32> {
     )
 }
 
+fn edge_peek_expanded_size(
+    minimal: bool,
+    remembered_size: PhysicalSize<u32>,
+    scale: f64,
+) -> PhysicalSize<u32> {
+    if minimal {
+        compact_window_size(scale)
+    } else {
+        PhysicalSize::new(remembered_size.width.max(1), remembered_size.height.max(1))
+    }
+}
+
 fn is_edge_peek_size(size: PhysicalSize<u32>, scale: f64) -> bool {
     let thickness = (EDGE_PEEK_THICKNESS * scale).round().max(1.0) as i64;
     (size.width as i64 - thickness).abs() <= 2 || (size.height as i64 - thickness).abs() <= 2
@@ -884,12 +903,28 @@ fn edge_peek_expanded_position(
 }
 
 #[tauri::command]
-fn snap_edge_peek(window: WebviewWindow) -> Result<Option<String>, String> {
+fn snap_edge_peek(
+    minimal: bool,
+    window: WebviewWindow,
+) -> Result<Option<EdgePeekSnapshot>, String> {
     let Some(direction) = edge_peek_direction(&window) else {
         return Ok(None);
     };
-    collapse_edge_peek_to(direction, &window)?;
-    Ok(Some(direction.to_owned()))
+    let size = window
+        .outer_size()
+        .map_err(|_| "无法读取窗口尺寸。".to_owned())?;
+    window
+        .set_resizable(false)
+        .map_err(|_| "无法锁定边缘窗口尺寸。".to_owned())?;
+    if let Err(error) = collapse_edge_peek_to(direction, &window) {
+        let _ = window.set_resizable(!minimal);
+        return Err(error);
+    }
+    Ok(Some(EdgePeekSnapshot {
+        direction: direction.to_owned(),
+        width: size.width,
+        height: size.height,
+    }))
 }
 
 fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), String> {
@@ -917,18 +952,38 @@ fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), 
 }
 
 #[tauri::command]
-fn collapse_edge_peek(direction: String, window: WebviewWindow) -> Result<(), String> {
-    collapse_edge_peek_to(direction.as_str(), &window)
+fn collapse_edge_peek(
+    direction: String,
+    minimal: bool,
+    window: WebviewWindow,
+) -> Result<(), String> {
+    window
+        .set_resizable(false)
+        .map_err(|_| "无法锁定边缘窗口尺寸。".to_owned())?;
+    if let Err(error) = collapse_edge_peek_to(direction.as_str(), &window) {
+        let _ = window.set_resizable(!minimal);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[tauri::command]
-fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), String> {
+fn expand_edge_peek(
+    direction: String,
+    minimal: bool,
+    width: u32,
+    height: u32,
+    window: WebviewWindow,
+) -> Result<(), String> {
+    if !matches!(direction.as_str(), "left" | "right" | "top") {
+        return Err("无法识别边缘吸附方向。".to_owned());
+    }
     let monitor = window
         .current_monitor()
         .map_err(|_| "无法读取显示器区域。")?
         .ok_or("无法读取显示器区域。")?;
     let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
-    let size = compact_window_size(scale);
+    let size = edge_peek_expanded_size(minimal, PhysicalSize::new(width, height), scale);
     let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
     let area = monitor.work_area();
     let target =
@@ -936,6 +991,9 @@ fn expand_edge_peek(direction: String, window: WebviewWindow) -> Result<(), Stri
     set_window_pos_and_size(&window, target, size);
     #[cfg(target_os = "windows")]
     apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
+    window
+        .set_resizable(!minimal)
+        .map_err(|_| "无法恢复窗口缩放状态。".to_owned())?;
     Ok(())
 }
 
@@ -1328,6 +1386,20 @@ mod tests {
         let compact = widget_size(true);
         assert_eq!((full.width, full.height), (290.0, 515.0));
         assert_eq!((compact.width, compact.height), (135.0, 60.0));
+    }
+
+    #[test]
+    fn edge_peek_restores_the_source_mode_size() {
+        let remembered = PhysicalSize::new(420, 720);
+        assert_eq!(edge_peek_expanded_size(false, remembered, 1.5), remembered);
+        assert_eq!(
+            edge_peek_expanded_size(true, remembered, 1.5),
+            PhysicalSize::new(203, 90)
+        );
+        assert_eq!(
+            edge_peek_expanded_size(false, PhysicalSize::new(0, 0), 1.0),
+            PhysicalSize::new(1, 1)
+        );
     }
 
     #[test]

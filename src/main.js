@@ -69,6 +69,10 @@ let codexRequestId = 0;
 let edgePeekDirection = null;
 let edgePeekExpanded = false;
 let edgePeekTransitioning = false;
+let edgePeekMinimal = false;
+let edgePeekExpandedSize = null;
+let edgeMoveArmed = false;
+let edgeMoveObserved = false;
 let edgePeekTimer;
 let edgeMoveTimer;
 const creditSnapshots = {};
@@ -132,16 +136,25 @@ function applyOpacity(value, persist = true) {
   }
 }
 
+function clearEdgePeekState() {
+  edgePeekDirection = null;
+  edgePeekExpanded = false;
+  edgePeekTransitioning = false;
+  edgePeekMinimal = false;
+  edgePeekExpandedSize = null;
+  edgeMoveArmed = false;
+  edgeMoveObserved = false;
+  clearTimeout(edgePeekTimer);
+  clearTimeout(edgeMoveTimer);
+  elements.edgePeek.hidden = true;
+  delete document.body.dataset.edgePeek;
+}
+
 function applyDisplayMode(compact, persist = true) {
   const enabled = Boolean(compact);
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
-  edgePeekDirection = null;
-  edgePeekExpanded = false;
-  edgePeekTransitioning = false;
-  clearTimeout(edgePeekTimer);
-  elements.edgePeek.hidden = true;
-  delete document.body.dataset.edgePeek;
+  clearEdgePeekState();
   if (enabled) {
     setSettingsView(false);
   }
@@ -159,16 +172,22 @@ function setSettingsView(open) {
 }
 
 async function enterEdgePeekIfNearEdge() {
-  if (document.body.dataset.mode !== "compact" || edgePeekDirection || edgePeekTransitioning) return;
+  if (!edgeMoveArmed || !edgeMoveObserved || edgePeekDirection || edgePeekTransitioning) return;
+  const minimal = document.body.dataset.mode === "compact";
+  edgeMoveArmed = false;
+  edgeMoveObserved = false;
+  clearTimeout(edgeMoveTimer);
   edgePeekTransitioning = true;
   try {
-    const direction = await invoke("snap_edge_peek");
-    if (!direction) return;
-    edgePeekDirection = direction;
+    const snapshot = await invoke("snap_edge_peek", { minimal });
+    if (!snapshot?.direction) return;
+    edgePeekDirection = snapshot.direction;
     edgePeekExpanded = false;
-    document.body.dataset.edgePeek = direction;
+    edgePeekMinimal = minimal;
+    edgePeekExpandedSize = { width: snapshot.width, height: snapshot.height };
+    document.body.dataset.edgePeek = snapshot.direction;
     elements.edgePeek.hidden = false;
-  } catch { /* keep normal compact mode */ }
+  } catch { /* keep the current display mode */ }
   finally { edgePeekTransitioning = false; }
 }
 
@@ -472,17 +491,21 @@ elements.forgetQoder.addEventListener("click", () => { void forgetService("forge
 elements.forgetTrae.addEventListener("click", () => { void forgetService("forget_trae", "trae"); });
 elements.compactToggle.addEventListener("click", () => applyDisplayMode(true));
 elements.exitCompact.addEventListener("click", () => applyDisplayMode(false));
-elements.miniContent.addEventListener("mouseup", () => { void enterEdgePeekIfNearEdge(); });
 elements.edgePeek.addEventListener("mouseenter", async () => {
-  if (!edgePeekDirection || edgePeekExpanded || edgePeekTransitioning) return;
+  if (!edgePeekDirection || !edgePeekExpandedSize || edgePeekExpanded || edgePeekTransitioning) return;
   clearTimeout(edgePeekTimer);
   edgePeekTransitioning = true;
   try {
-    // Switch CSS first so the mini-content is visible the instant the window
-    // resizes from 20px to 135px, preventing a flash of the edge-peek bar.
+    // Switch CSS first so source-mode content is visible as the window expands,
+    // preventing a flash of the edge-peek bar.
     delete document.body.dataset.edgePeek;
     elements.edgePeek.hidden = true;
-    await invoke("expand_edge_peek", { direction: edgePeekDirection });
+    await invoke("expand_edge_peek", {
+      direction: edgePeekDirection,
+      minimal: edgePeekMinimal,
+      width: edgePeekExpandedSize.width,
+      height: edgePeekExpandedSize.height,
+    });
     edgePeekExpanded = true;
   } catch {
     // Restore edge-peek visuals if the Rust call failed.
@@ -495,17 +518,16 @@ panel.addEventListener("mouseenter", () => {
   clearTimeout(edgePeekTimer);
 });
 panel.addEventListener("mouseleave", () => {
-  if (!edgePeekDirection || !edgePeekExpanded || document.body.dataset.mode !== "compact") return;
+  if (!edgePeekDirection || !edgePeekExpanded) return;
   clearTimeout(edgePeekTimer);
   const direction = edgePeekDirection;
   edgePeekTimer = setTimeout(async () => {
     if (edgePeekDirection !== direction || !edgePeekExpanded || edgePeekTransitioning) return;
     edgePeekTransitioning = true;
     try {
-      // Resize the window to 20px first, then switch CSS.  In a 20px window
-      // the mini-content is too narrow to be visible, so there is no flash
-      // of compact-mode content before the edge-peek bar appears.
-      await invoke("collapse_edge_peek", { direction });
+      // Resize first, then switch CSS. The collapsed window is too narrow for
+      // source-mode content, so the edge-peek bar can appear without a flash.
+      await invoke("collapse_edge_peek", { direction, minimal: edgePeekMinimal });
       edgePeekExpanded = false;
       document.body.dataset.edgePeek = direction;
       elements.edgePeek.hidden = false;
@@ -513,8 +535,9 @@ panel.addEventListener("mouseleave", () => {
     finally { edgePeekTransitioning = false; }
   }, 350);
 });
-elements.edgePeek.addEventListener("mousedown", async () => {
-  if (!edgePeekDirection || edgePeekTransitioning) return;
+elements.edgePeek.addEventListener("mousedown", async (event) => {
+  event.stopPropagation();
+  if (!edgePeekDirection || !edgePeekExpandedSize || edgePeekTransitioning) return;
   clearTimeout(edgePeekTimer);
   const direction = edgePeekDirection;
   edgePeekTransitioning = true;
@@ -523,7 +546,12 @@ elements.edgePeek.addEventListener("mousedown", async () => {
     delete document.body.dataset.edgePeek;
     elements.edgePeek.hidden = true;
     try {
-      await invoke("expand_edge_peek", { direction });
+      await invoke("expand_edge_peek", {
+        direction,
+        minimal: edgePeekMinimal,
+        width: edgePeekExpandedSize.width,
+        height: edgePeekExpandedSize.height,
+      });
     } catch {
       document.body.dataset.edgePeek = direction;
       elements.edgePeek.hidden = false;
@@ -531,13 +559,9 @@ elements.edgePeek.addEventListener("mousedown", async () => {
       return;
     }
   }
-  edgePeekDirection = null;
-  edgePeekExpanded = false;
-  edgePeekTransitioning = false;
-  delete document.body.dataset.edgePeek;
-  elements.edgePeek.hidden = true;
+  clearEdgePeekState();
+  edgeMoveArmed = true;
   await appWindow.startDragging().catch(() => {});
-  void enterEdgePeekIfNearEdge();
 });
 elements.minimize.addEventListener("click", () => {
   void invoke("hide_panel");
@@ -560,17 +584,24 @@ panel.addEventListener("mousedown", (event) => {
   if (event.button !== 0 || !(event.target instanceof Element)) return;
   if (event.target.closest("button, a, input, textarea, select, label")) return;
   if (edgePeekDirection) {
-    edgePeekDirection = null;
-    edgePeekExpanded = false;
-    clearTimeout(edgePeekTimer);
-    delete document.body.dataset.edgePeek;
-    elements.edgePeek.hidden = true;
+    clearEdgePeekState();
   }
+  edgeMoveArmed = true;
+  edgeMoveObserved = false;
   void appWindow.startDragging().catch(() => {});
+});
+panel.addEventListener("mouseup", () => {
+  if (!edgeMoveArmed) return;
+  if (edgeMoveObserved) {
+    void enterEdgePeekIfNearEdge();
+  } else {
+    edgeMoveArmed = false;
+  }
 });
 if (typeof appWindow.onMoved === "function") {
   void appWindow.onMoved(() => {
-    if (document.body.dataset.mode !== "compact" || edgePeekDirection || edgePeekTransitioning) return;
+    if (!edgeMoveArmed || edgePeekDirection || edgePeekTransitioning) return;
+    edgeMoveObserved = true;
     clearTimeout(edgeMoveTimer);
     edgeMoveTimer = setTimeout(() => { void enterEdgePeekIfNearEdge(); }, 180);
   });

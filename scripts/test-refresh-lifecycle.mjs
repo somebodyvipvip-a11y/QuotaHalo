@@ -132,6 +132,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
       return [];
     },
   };
+  globalThis.Element = FakeElement;
   let savedTheme;
   const connected = { qoder: false, trae: false };
   globalThis.localStorage = { getItem: (key) => key === "quota-halo-display-mode" ? "compact" : null, setItem: (_key, value) => { savedTheme = value; } };
@@ -155,7 +156,7 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
           : command === "refresh_trae"
             ? Promise.resolve(connected.trae ? { status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请登录 TRAE 账号" })
         : command === "snap_edge_peek"
-          ? (edgeCommands.push({ command, args }), Promise.resolve("left"))
+          ? (edgeCommands.push({ command, args }), Promise.resolve({ direction: "left", width: args.minimal ? 135 : 290, height: args.minimal ? 60 : 515 }))
         : command === "collapse_edge_peek"
           ? (edgeCommands.push({ command, args }), Promise.resolve())
         : command === "expand_edge_peek"
@@ -191,23 +192,61 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   await import(moduleUrl);
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "", `${name}: fresh launch should default to full mode`);
+  assert.equal(typeof movedCallback, "function", `${name}: window movement was not observed for edge peek`);
+  movedCallback();
+  assert.equal(edgeMoveCallback, undefined, `${name}: programmatic startup movement armed edge peek`);
+  assert.equal(edgeCommands.length, 0, `${name}: fresh launch entered edge peek`);
+
+  const dragTarget = new FakeElement();
+  dragTarget.closest = () => null;
+  elements.get(".panel").listeners.get("mousedown")({ button: 0, target: dragTarget });
+  movedCallback();
+  edgeMoveCallback();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: full-mode user drag did not enter edge peek`);
+  assert.deepEqual(edgeCommands.at(-1), { command: "snap_edge_peek", args: { minimal: false } }, `${name}: full-mode edge peek lost its source mode`);
+  elements.get("#edge-peek").listeners.get("mouseenter")();
+  await Promise.resolve();
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: full-mode edge peek changed display mode`);
+  assert.deepEqual(edgeCommands.at(-1), { command: "expand_edge_peek", args: { direction: "left", minimal: false, width: 290, height: 515 } }, `${name}: full-mode edge peek did not restore its original size`);
+  elements.get(".panel").listeners.get("mouseleave")();
+  edgeLeaveCallback();
+  await Promise.resolve();
+  assert.deepEqual(edgeCommands.at(-1), { command: "collapse_edge_peek", args: { direction: "left", minimal: false } }, `${name}: full-mode edge peek did not collapse after pointer leave`);
+
   elements.get("#compact-toggle").listeners.get("click")();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: compact mode could not be enabled`);
-  assert.equal(typeof movedCallback, "function", `${name}: window movement was not observed for edge peek`);
+  edgeMoveCallback = undefined;
+  movedCallback();
+  assert.equal(edgeMoveCallback, undefined, `${name}: mode resize armed compact edge peek`);
+  elements.get(".panel").listeners.get("mousedown")({ button: 0, target: dragTarget });
   movedCallback();
   edgeMoveCallback();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: stopped window movement did not enter edge peek`);
+  assert.deepEqual(edgeCommands.at(-1), { command: "snap_edge_peek", args: { minimal: true } }, `${name}: compact edge peek lost its source mode`);
   elements.get("#edge-peek").listeners.get("mouseenter")();
   await Promise.resolve();
   assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: hover expansion kept compact content hidden`);
+  assert.deepEqual(edgeCommands.at(-1), { command: "expand_edge_peek", args: { direction: "left", minimal: true, width: 135, height: 60 } }, `${name}: compact edge peek did not restore its fixed size`);
   assert.equal(typeof elements.get(".panel").listeners.get("mouseleave"), "function", `${name}: edge peek collapse is not bound to the stable panel boundary`);
   elements.get(".panel").listeners.get("mouseleave")();
   edgeLeaveCallback();
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.edgePeek, "left", `${name}: leaving expanded compact mode did not restore edge peek`);
-  assert.deepEqual(edgeCommands.slice(-1), [{ command: "collapse_edge_peek", args: { direction: "left" } }], `${name}: expanded edge changed direction or re-ran edge detection`);
+  assert.deepEqual(edgeCommands.slice(-1), [{ command: "collapse_edge_peek", args: { direction: "left", minimal: true } }], `${name}: expanded edge changed direction or re-ran edge detection`);
+  let edgeMouseDownStopped = false;
+  elements.get("#edge-peek").listeners.get("mousedown")({ stopPropagation: () => { edgeMouseDownStopped = true; } });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(edgeMouseDownStopped, true, `${name}: edge-bar drag bubbled into the panel drag handler`);
+  assert.equal(Object.hasOwn(globalThis.document.body.dataset, "edgePeek"), false, `${name}: dragging the edge bar did not restore its source mode`);
+  assert.deepEqual(edgeCommands.at(-1), { command: "expand_edge_peek", args: { direction: "left", minimal: true, width: 135, height: 60 } }, `${name}: edge-bar drag expanded with the wrong source mode`);
+  movedCallback();
+  edgeMoveCallback();
+  await Promise.resolve();
+  assert.deepEqual(edgeCommands.at(-1), { command: "snap_edge_peek", args: { minimal: true } }, `${name}: edge-bar drag could not re-enter edge peek`);
   elements.get("#exit-compact").listeners.get("click")();
   await Promise.resolve();
   assert.ok(intervalMs.includes(180_000), `${name}: automatic refresh is not three minutes`);
