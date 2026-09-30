@@ -18,7 +18,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -793,22 +793,48 @@ fn hide_panel(window: WebviewWindow) {
 }
 
 #[tauri::command]
+fn reveal_panel(app: AppHandle) {
+    show_panel(&app);
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
 #[tauri::command]
 fn set_widget_mode(minimal: bool, window: WebviewWindow) -> Result<(), String> {
-    // Pin the top-left corner: record the current position, resize, then restore.
-    let anchor = window.outer_position().unwrap_or_default();
-    window
-        .set_size(widget_size(minimal))
-        .map_err(|_| "无法调整 QuotaHalo 窗口大小。")?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|_| "无法读取显示器区域。")?
+        .ok_or("无法读取显示器区域。")?;
+    let scale = window.scale_factor().map_err(|_| "无法读取窗口缩放。")?;
+    let anchor = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
+    let size = widget_size(minimal).to_physical(scale);
+    let area = monitor.work_area();
+    let target = clamp_position_to_work_area(anchor, size, area.position, area.size);
+    set_window_pos_and_size(&window, target, size)?;
     window
         .set_resizable(!minimal)
         .map_err(|_| "无法更新 QuotaHalo 窗口缩放状态。")?;
-    let _ = window.set_position(anchor);
+    #[cfg(target_os = "windows")]
+    apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
     Ok(())
+}
+
+fn clamp_position_to_work_area(
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+    area_position: PhysicalPosition<i32>,
+    area_size: PhysicalSize<u32>,
+) -> PhysicalPosition<i32> {
+    let max_x = (area_position.x + area_size.width as i32 - size.width as i32).max(area_position.x);
+    let max_y =
+        (area_position.y + area_size.height as i32 - size.height as i32).max(area_position.y);
+    PhysicalPosition::new(
+        position.x.clamp(area_position.x, max_x),
+        position.y.clamp(area_position.y, max_y),
+    )
 }
 
 fn edge_peek_direction(window: &WebviewWindow) -> Option<&'static str> {
@@ -862,6 +888,33 @@ fn edge_peek_direction_for(
     .filter(|(_, dist, max)| *dist <= threshold && *dist >= -*max)
     .min_by_key(|(_, dist, _)| *dist)
     .map(|(direction, _, _)| direction)
+}
+
+fn nearest_edge_direction(
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+    area_position: PhysicalPosition<i32>,
+    area_size: PhysicalSize<u32>,
+) -> &'static str {
+    let area_right = i64::from(area_position.x) + i64::from(area_size.width);
+    let window_right = i64::from(position.x) + i64::from(size.width);
+    [
+        (
+            "left",
+            (i64::from(position.x) - i64::from(area_position.x)).abs(),
+            0,
+        ),
+        ("right", (area_right - window_right).abs(), 1),
+        (
+            "top",
+            (i64::from(position.y) - i64::from(area_position.y)).abs(),
+            2,
+        ),
+    ]
+    .into_iter()
+    .min_by_key(|(_, distance, priority)| (*distance, *priority))
+    .map(|(direction, _, _)| direction)
+    .unwrap_or("left")
 }
 
 fn edge_peek_position(
@@ -983,6 +1036,33 @@ fn snap_edge_peek(
     }))
 }
 
+#[tauri::command]
+fn snap_edge_peek_nearest(
+    minimal: bool,
+    window: WebviewWindow,
+) -> Result<EdgePeekSnapshot, String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|_| "无法读取显示器区域。")?
+        .ok_or("无法读取显示器区域。")?;
+    let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
+    let size = window.outer_size().map_err(|_| "无法读取窗口尺寸。")?;
+    let area = monitor.work_area();
+    let direction = nearest_edge_direction(position, size, area.position, area.size);
+    window
+        .set_resizable(false)
+        .map_err(|_| "无法锁定边缘窗口尺寸。".to_owned())?;
+    if let Err(error) = collapse_edge_peek_to(direction, &window) {
+        let _ = window.set_resizable(!minimal);
+        return Err(error);
+    }
+    Ok(EdgePeekSnapshot {
+        direction: direction.to_owned(),
+        width: size.width,
+        height: size.height,
+    })
+}
+
 fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), String> {
     if !matches!(direction, "left" | "right" | "top") {
         return Err("无法识别边缘吸附方向。".to_owned());
@@ -996,7 +1076,7 @@ fn collapse_edge_peek_to(direction: &str, window: &WebviewWindow) -> Result<(), 
     let position = window.outer_position().map_err(|_| "无法读取窗口位置。")?;
     let area = monitor.work_area();
     let target = edge_peek_position(direction, position, size, area.position, area.size);
-    set_window_pos_and_size(window, target, size);
+    set_window_pos_and_size(window, target, size)?;
     // In edge peek mode the window is a thin bar.  We skip the Win32 rounded
     // region entirely and let CSS border-radius + overflow:hidden handle the
     // visual rounding.  This avoids the mismatch between elliptic
@@ -1044,7 +1124,7 @@ fn expand_edge_peek(
     let area = monitor.work_area();
     let target =
         edge_peek_expanded_position(direction.as_str(), position, size, area.position, area.size);
-    set_window_pos_and_size(&window, target, size);
+    set_window_pos_and_size(&window, target, size)?;
     #[cfg(target_os = "windows")]
     apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
     window
@@ -1073,7 +1153,7 @@ fn expand_edge_peek_to_full(
     let area = monitor.work_area();
     let target =
         edge_peek_expanded_position(direction.as_str(), position, size, area.position, area.size);
-    set_window_pos_and_size(&window, target, size);
+    set_window_pos_and_size(&window, target, size)?;
     #[cfg(target_os = "windows")]
     apply_rounded_window_region(&window, WINDOW_CORNER_RADIUS);
     window
@@ -1208,7 +1288,7 @@ fn set_window_pos_and_size(
     window: &WebviewWindow,
     position: PhysicalPosition<i32>,
     size: PhysicalSize<u32>,
-) {
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::{
@@ -1217,7 +1297,7 @@ fn set_window_pos_and_size(
         };
         if let Ok(hwnd) = window.hwnd() {
             unsafe {
-                let _ = SetWindowPos(
+                let result = SetWindowPos(
                     hwnd.0,
                     0 as HWND,
                     position.x,
@@ -1226,12 +1306,20 @@ fn set_window_pos_and_size(
                     size.height as i32,
                     SWP_NOZORDER | SWP_NOACTIVATE,
                 );
+                if result == 0 {
+                    return Err("无法调整 QuotaHalo 窗口位置或大小。".to_owned());
+                }
             }
-            return;
+            return Ok(());
         }
     }
-    let _ = window.set_size(size);
-    let _ = window.set_position(position);
+    window
+        .set_size(size)
+        .map_err(|_| "无法调整 QuotaHalo 窗口大小。".to_owned())?;
+    window
+        .set_position(position)
+        .map_err(|_| "无法调整 QuotaHalo 窗口位置。".to_owned())?;
+    Ok(())
 }
 
 fn main() {
@@ -1239,11 +1327,29 @@ fn main() {
         .manage(AppServerClient::default())
         .manage(QoderTokenCache::default())
         .setup(|app| {
+            let full_mode = MenuItem::with_id(app, "mode-full", "完整模式", true, None::<&str>)?;
+            let compact_mode =
+                MenuItem::with_id(app, "mode-compact", "极简模式", true, None::<&str>)?;
+            let edge_mode = MenuItem::with_id(app, "mode-edge", "边缘模式", true, None::<&str>)?;
+            let mode_separator = PredefinedMenuItem::separator(app)?;
             let refresh = MenuItem::with_id(app, "refresh", "刷新额度", true, None::<&str>)?;
             let usage =
                 MenuItem::with_id(app, "usage", "打开 ChatGPT 用量页面", true, None::<&str>)?;
+            let action_separator = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&refresh, &usage, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &full_mode,
+                    &compact_mode,
+                    &edge_mode,
+                    &mode_separator,
+                    &refresh,
+                    &usage,
+                    &action_separator,
+                    &quit,
+                ],
+            )?;
             let tray_icon = app
                 .default_window_icon()
                 .cloned()
@@ -1253,7 +1359,17 @@ fn main() {
                 .icon(tray_icon)
                 .tooltip("QuotaHalo · 额度光环")
                 .menu(&menu)
+                .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "mode-full" => {
+                        let _ = app.emit("tray-mode-request", "full");
+                    }
+                    "mode-compact" => {
+                        let _ = app.emit("tray-mode-request", "compact");
+                    }
+                    "mode-edge" => {
+                        let _ = app.emit("tray-mode-request", "edge");
+                    }
                     "refresh" => {
                         let _ = app.emit("quota-refresh-request", ());
                     }
@@ -1297,9 +1413,7 @@ fn main() {
                             let _ = tray_click_state
                                 .lock()
                                 .map(|mut state| state.on_left_double_click());
-                            let app = tray.app_handle();
-                            show_panel(app);
-                            let _ = app.emit("tray-double-click", ());
+                            let _ = tray.app_handle().emit("tray-mode-request", "full");
                         }
                         _ => {}
                     }
@@ -1370,9 +1484,11 @@ fn main() {
             save_trae_token,
             open_trae_login,
             hide_panel,
+            reveal_panel,
             quit_app,
             set_widget_mode,
             snap_edge_peek,
+            snap_edge_peek_nearest,
             collapse_edge_peek,
             expand_edge_peek,
             expand_edge_peek_to_full,
@@ -1597,6 +1713,16 @@ mod tests {
         );
         assert_eq!(
             edge_peek_expanded_position(
+                "right",
+                PhysicalPosition::new(1900, 1200),
+                full_size,
+                monitor_position,
+                monitor_size
+            ),
+            PhysicalPosition::new(1785, 1020)
+        );
+        assert_eq!(
+            edge_peek_expanded_position(
                 "top",
                 PhysicalPosition::new(640, 0),
                 full_size,
@@ -1632,6 +1758,55 @@ mod tests {
         assert_eq!(
             edge_peek_direction_for(PhysicalPosition::new(700, 1020), size, origin, monitor, 24),
             None
+        );
+    }
+
+    #[test]
+    fn tray_edge_mode_chooses_the_nearest_supported_edge() {
+        let origin = PhysicalPosition::new(-1920, 40);
+        let monitor = PhysicalSize::new(1920, 1040);
+        let size = PhysicalSize::new(290, 515);
+        assert_eq!(
+            nearest_edge_direction(PhysicalPosition::new(-1880, 400), size, origin, monitor),
+            "left"
+        );
+        assert_eq!(
+            nearest_edge_direction(PhysicalPosition::new(-330, 400), size, origin, monitor),
+            "right"
+        );
+        assert_eq!(
+            nearest_edge_direction(PhysicalPosition::new(-1200, 55), size, origin, monitor),
+            "top"
+        );
+    }
+
+    #[test]
+    fn tray_edge_mode_uses_left_right_top_as_the_tie_break_order() {
+        let origin = PhysicalPosition::new(0, 0);
+        let monitor = PhysicalSize::new(1000, 1000);
+        let size = PhysicalSize::new(200, 200);
+        assert_eq!(
+            nearest_edge_direction(PhysicalPosition::new(100, 100), size, origin, monitor),
+            "left"
+        );
+        assert_eq!(
+            nearest_edge_direction(PhysicalPosition::new(700, 100), size, origin, monitor),
+            "right"
+        );
+    }
+
+    #[test]
+    fn mode_resize_keeps_the_window_inside_the_work_area() {
+        let origin = PhysicalPosition::new(-1920, 40);
+        let monitor = PhysicalSize::new(1920, 1040);
+        let full = PhysicalSize::new(435, 773);
+        assert_eq!(
+            clamp_position_to_work_area(PhysicalPosition::new(-200, 700), full, origin, monitor),
+            PhysicalPosition::new(-435, 307)
+        );
+        assert_eq!(
+            clamp_position_to_work_area(PhysicalPosition::new(-1900, 60), full, origin, monitor),
+            PhysicalPosition::new(-1900, 60)
         );
     }
 

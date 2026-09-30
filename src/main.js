@@ -150,7 +150,7 @@ function clearEdgePeekState() {
   delete document.body.dataset.edgePeek;
 }
 
-function applyDisplayMode(compact, persist = true) {
+function commitDisplayMode(compact, persist = true) {
   const enabled = Boolean(compact);
   document.body.dataset.mode = enabled ? "compact" : "";
   elements.miniContent.hidden = !enabled;
@@ -158,10 +158,24 @@ function applyDisplayMode(compact, persist = true) {
   if (enabled) {
     setSettingsView(false);
   }
-  void invoke("set_widget_mode", { minimal: enabled }).catch(() => {});
   if (persist) {
     try { localStorage.setItem(MODE_STORAGE_KEY, enabled ? "compact" : "full"); } catch { /* storage unavailable */ }
   }
+}
+
+function applyDisplayMode(compact, persist = true) {
+  const enabled = Boolean(compact);
+  commitDisplayMode(enabled, persist);
+  void invoke("set_widget_mode", { minimal: enabled }).catch(() => {});
+}
+
+function commitEdgePeek(snapshot, minimal) {
+  edgePeekDirection = snapshot.direction;
+  edgePeekExpanded = false;
+  edgePeekMinimal = minimal;
+  edgePeekExpandedSize = { width: snapshot.width, height: snapshot.height };
+  document.body.dataset.edgePeek = snapshot.direction;
+  elements.edgePeek.hidden = false;
 }
 
 function setSettingsView(open) {
@@ -181,22 +195,53 @@ async function enterEdgePeekIfNearEdge() {
   try {
     const snapshot = await invoke("snap_edge_peek", { minimal });
     if (!snapshot?.direction) return;
-    edgePeekDirection = snapshot.direction;
-    edgePeekExpanded = false;
-    edgePeekMinimal = minimal;
-    edgePeekExpandedSize = { width: snapshot.width, height: snapshot.height };
-    document.body.dataset.edgePeek = snapshot.direction;
-    elements.edgePeek.hidden = false;
+    commitEdgePeek(snapshot, minimal);
   } catch { /* keep the current display mode */ }
   finally { edgePeekTransitioning = false; }
 }
 
-async function expandEdgePeekToFullFromTray() {
-  if (!edgePeekDirection || !edgePeekExpandedSize || edgePeekTransitioning) return;
+async function handleTrayModeRequest(event) {
+  const targetMode = typeof event === "string" ? event : event?.payload;
+  if (!new Set(["full", "compact", "edge"]).has(targetMode) || edgePeekTransitioning) return;
+
+  if (targetMode === "edge") {
+    if (edgePeekDirection) {
+      await invoke("reveal_panel").catch(() => {});
+      return;
+    }
+    const minimal = document.body.dataset.mode === "compact";
+    edgePeekTransitioning = true;
+    try {
+      const snapshot = await invoke("snap_edge_peek_nearest", { minimal });
+      if (!snapshot?.direction) return;
+      commitEdgePeek(snapshot, minimal);
+      await invoke("reveal_panel").catch(() => {});
+    } catch { /* keep the current display mode */ }
+    finally { edgePeekTransitioning = false; }
+    return;
+  }
+
+  const minimal = targetMode === "compact";
+  if (!edgePeekDirection) {
+    const currentlyMinimal = document.body.dataset.mode === "compact";
+    try {
+      if (currentlyMinimal !== minimal) {
+        await invoke("set_widget_mode", { minimal });
+      }
+      commitDisplayMode(minimal);
+      await invoke("reveal_panel").catch(() => {});
+    } catch { /* keep the current display mode */ }
+    return;
+  }
+
+  if (!edgePeekExpandedSize) {
+    await invoke("reveal_panel").catch(() => {});
+    return;
+  }
   const direction = edgePeekDirection;
   const wasExpanded = edgePeekExpanded;
-  const width = edgePeekMinimal ? 0 : edgePeekExpandedSize.width;
-  const height = edgePeekMinimal ? 0 : edgePeekExpandedSize.height;
+  const width = edgePeekExpandedSize.width;
+  const height = edgePeekExpandedSize.height;
   clearTimeout(edgePeekTimer);
   clearTimeout(edgeMoveTimer);
   edgePeekTransitioning = true;
@@ -205,11 +250,17 @@ async function expandEdgePeekToFullFromTray() {
     elements.edgePeek.hidden = true;
   }
   try {
-    await invoke("expand_edge_peek_to_full", { direction, width, height });
-    document.body.dataset.mode = "";
-    elements.miniContent.hidden = true;
-    clearEdgePeekState();
-    try { localStorage.setItem(MODE_STORAGE_KEY, "full"); } catch { /* storage unavailable */ }
+    if (minimal) {
+      await invoke("expand_edge_peek", { direction, minimal: true, width, height });
+    } else {
+      await invoke("expand_edge_peek_to_full", {
+        direction,
+        width: edgePeekMinimal ? 0 : width,
+        height: edgePeekMinimal ? 0 : height,
+      });
+    }
+    commitDisplayMode(minimal);
+    await invoke("reveal_panel").catch(() => {});
   } catch {
     if (!wasExpanded) {
       document.body.dataset.edgePeek = direction;
@@ -643,7 +694,7 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-await listen("tray-double-click", expandEdgePeekToFullFromTray);
+await listen("tray-mode-request", handleTrayModeRequest);
 await listen("quota-refresh-request", refresh);
 await listen("trae-auth-complete", () => {
   elements.connectionMessages.trae.textContent = "TRAE 已登录，重新打开软件仍会保持登录";

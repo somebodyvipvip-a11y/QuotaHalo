@@ -118,8 +118,10 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   let edgeMoveCallback;
   let edgeLeaveCallback;
   let failTrayExpansion = false;
+  let failModeResize = false;
   const edgeCommands = [];
   const resizeCommands = [];
+  const panelCommands = [];
   const eventListeners = new Map();
   const intervalMs = [];
   const themeChoices = ["violet", "blue", "mint", "amber"].map((theme) => {
@@ -162,12 +164,18 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
             ? Promise.resolve(connected.trae ? { status: "ready", remaining: 860, total: 1000, updated_at: 1_900_000_000 } : { status: "unavailable", message: "请登录 TRAE 账号" })
         : command === "snap_edge_peek"
           ? (edgeCommands.push({ command, args }), Promise.resolve({ direction: "left", width: args.minimal ? 135 : 290, height: args.minimal ? 60 : 515 }))
+        : command === "snap_edge_peek_nearest"
+          ? (edgeCommands.push({ command, args }), Promise.resolve({ direction: "right", width: args.minimal ? 135 : 290, height: args.minimal ? 60 : 515 }))
         : command === "collapse_edge_peek"
           ? (edgeCommands.push({ command, args }), Promise.resolve())
         : command === "expand_edge_peek"
           ? (edgeCommands.push({ command, args }), Promise.resolve())
         : command === "expand_edge_peek_to_full"
           ? (edgeCommands.push({ command, args }), failTrayExpansion ? Promise.reject(new Error("tray expansion failed")) : Promise.resolve())
+        : command === "set_widget_mode"
+          ? (panelCommands.push({ command, args }), failModeResize ? Promise.reject(new Error("mode resize failed")) : Promise.resolve())
+        : command === "reveal_panel"
+          ? (panelCommands.push({ command, args }), Promise.resolve())
         : command === "refresh_quota" && verifyRefreshRetention && quotaCalls++ > 0
           ? new Promise((resolve) => { resolveSecondQuota = resolve; })
           : invoke(command, args) },
@@ -199,12 +207,46 @@ async function runScenario(name, invoke, fireDeadline = false, verifyRefreshRete
   await import(moduleUrl);
   await Promise.resolve();
   assert.equal(globalThis.document.body.dataset.mode, "", `${name}: fresh launch should default to full mode`);
-  const trayDoubleClick = eventListeners.get("tray-double-click");
-  assert.equal(typeof trayDoubleClick, "function", `${name}: tray double click was not observed`);
+  const trayModeRequest = eventListeners.get("tray-mode-request");
+  assert.equal(typeof trayModeRequest, "function", `${name}: tray mode request was not observed`);
+  const trayDoubleClick = () => trayModeRequest({ payload: "full" });
   const ordinaryDoubleClickCommandCount = edgeCommands.length;
   await trayDoubleClick();
   assert.equal(globalThis.document.body.dataset.mode, "", `${name}: ordinary tray double click changed display mode`);
   assert.equal(edgeCommands.length, ordinaryDoubleClickCommandCount, `${name}: ordinary tray double click invoked an edge command`);
+  assert.deepEqual(panelCommands.at(-1), { command: "reveal_panel", args: undefined }, `${name}: full-mode tray request did not reveal the window`);
+
+  failModeResize = true;
+  await trayModeRequest({ payload: "compact" });
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: failed tray compact request changed the display mode`);
+  failModeResize = false;
+  await trayModeRequest({ payload: "compact" });
+  assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: tray compact request did not switch display mode`);
+  assert.deepEqual(panelCommands.slice(-2), [
+    { command: "set_widget_mode", args: { minimal: true } },
+    { command: "reveal_panel", args: undefined },
+  ], `${name}: tray compact request did not resize before revealing`);
+  await trayModeRequest({ payload: "full" });
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: tray full request did not restore full mode`);
+  assert.deepEqual(panelCommands.slice(-2), [
+    { command: "set_widget_mode", args: { minimal: false } },
+    { command: "reveal_panel", args: undefined },
+  ], `${name}: tray full request did not resize before revealing`);
+  await trayModeRequest({ payload: "edge" });
+  assert.equal(globalThis.document.body.dataset.edgePeek, "right", `${name}: tray edge request did not enter the nearest edge`);
+  assert.deepEqual(edgeCommands.at(-1), { command: "snap_edge_peek_nearest", args: { minimal: false } }, `${name}: tray edge request did not use nearest-edge snapping`);
+  const repeatedEdgeCommandCount = edgeCommands.length;
+  await trayModeRequest({ payload: "edge" });
+  assert.equal(edgeCommands.length, repeatedEdgeCommandCount, `${name}: repeated tray edge request changed window geometry`);
+  await trayModeRequest({ payload: "compact" });
+  assert.equal(globalThis.document.body.dataset.mode, "compact", `${name}: edge-to-compact tray request did not restore compact mode`);
+  assert.deepEqual(edgeCommands.at(-1), { command: "expand_edge_peek", args: { direction: "right", minimal: true, width: 290, height: 515 } }, `${name}: edge-to-compact tray request used the wrong anchor or size`);
+  await trayModeRequest({ payload: "edge" });
+  assert.deepEqual(edgeCommands.at(-1), { command: "snap_edge_peek_nearest", args: { minimal: true } }, `${name}: compact tray edge request lost its source mode`);
+  await trayDoubleClick();
+  assert.deepEqual(edgeCommands.at(-1), { command: "expand_edge_peek_to_full", args: { direction: "right", width: 0, height: 0 } }, `${name}: compact tray edge request did not expand to the default full size`);
+  assert.equal(globalThis.document.body.dataset.mode, "", `${name}: compact edge tray double click did not restore full mode`);
+  edgeCommands.length = 0;
   assert.equal(typeof movedCallback, "function", `${name}: window movement was not observed for edge peek`);
   movedCallback();
   assert.equal(edgeMoveCallback, undefined, `${name}: programmatic startup movement armed edge peek`);
