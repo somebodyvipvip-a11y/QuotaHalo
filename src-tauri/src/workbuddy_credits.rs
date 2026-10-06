@@ -37,13 +37,22 @@ fn read_session(path: &Path) -> Result<Session, &'static str> {
     if path.with_extension("info.logged-out").exists() {
         return Err("请登录 WorkBuddy");
     }
-    let raw = fs::read_to_string(path).map_err(|_| "请登录 WorkBuddy")?;
+    let raw = fs::read_to_string(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "请登录 WorkBuddy"
+        } else {
+            "WorkBuddy 登录文件无法读取"
+        }
+    })?;
     let value: Value = serde_json::from_str(&raw).map_err(|_| "WorkBuddy 登录信息无效")?;
-    let token = value
-        .pointer("/auth/accessToken")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .ok_or("请登录 WorkBuddy")?;
+    let token = match value.pointer("/auth/accessToken") {
+        Some(Value::String(token)) if !token.is_empty() => token,
+        Some(Value::String(_)) | Some(Value::Null) | None => return Err("请登录 WorkBuddy"),
+        Some(token) if token.get("$wbEncrypted").and_then(Value::as_u64) == Some(1) => {
+            return Err("新版 WorkBuddy 登录态暂不兼容");
+        }
+        Some(_) => return Err("WorkBuddy 登录信息无效"),
+    };
     let uid = value
         .pointer("/account/uid")
         .and_then(Value::as_str)
@@ -198,6 +207,47 @@ fn retryable_status(status: StatusCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encrypted_session_is_not_reported_as_logged_out() {
+        let dir = env::temp_dir().join(format!("quotahalo-workbuddy-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("workbuddy-desktop.info");
+        for token in [
+            json!({"$wbEncrypted":1,"envelope":"fixture"}),
+            json!({"$wbEncrypted":1,"scheme":"asym-v1","envelope":"fixture"}),
+        ] {
+            fs::write(
+                &path,
+                json!({"auth":{"accessToken":token},"account":{"uid":"fixture"}}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                read_session(&path).err(),
+                Some("新版 WorkBuddy 登录态暂不兼容")
+            );
+        }
+        fs::write(
+            &path,
+            r#"{"auth":{"accessToken":"fixture"},"account":{"uid":"fixture"}}"#,
+        )
+        .unwrap();
+        assert!(read_session(&path).is_ok());
+        fs::write(path.with_extension("info.logged-out"), "fixture").unwrap();
+        assert_eq!(read_session(&path).err(), Some("请登录 WorkBuddy"));
+        fs::remove_file(path.with_extension("info.logged-out")).unwrap();
+        fs::write(&path, "invalid json").unwrap();
+        assert_eq!(read_session(&path).err(), Some("WorkBuddy 登录信息无效"));
+        fs::write(
+            &path,
+            r#"{"auth":{"accessToken":{}},"account":{"uid":"fixture"}}"#,
+        )
+        .unwrap();
+        assert_eq!(read_session(&path).err(), Some("WorkBuddy 登录信息无效"));
+        fs::remove_file(&path).unwrap();
+        assert_eq!(read_session(&path).err(), Some("请登录 WorkBuddy"));
+        fs::remove_dir(&dir).unwrap();
+    }
 
     #[test]
     fn personal_packages_sum_without_double_filtering() {

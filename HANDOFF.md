@@ -44,4 +44,6 @@ cargo build --release --manifest-path src-tauri/Cargo.toml
 
 ## 后续工作
 
+2026-10-06：WorkBuddy 本机版本 5.7.6.0 的共享会话 accessToken 已为 `$wbEncrypted: 1` / `envelope` 对象。0.7.1 修正为“新版 WorkBuddy 登录态暂不兼容”，不再误报未登录或被默认账户过滤隐藏；明文会话仍兼容。积分自动读取尚未恢复。调查本机 app.asar：`main/index.js` 中 `/workbuddy/probe` 仅返回 ok、app、version、platform；`auth:getAccountUsage` 在内部 stdio RPC 通道中，未验证可供第三方复用的连接入口。没有关闭加密、解密凭据或改动 WorkBuddy 配置。
+
 用真实 Qoder PAT 和 TRAE 登录会话核对响应路径、鉴权头、自动续期及最终积分口径。多显示器任务栏定位仍需在更多 Windows 配置下验证。

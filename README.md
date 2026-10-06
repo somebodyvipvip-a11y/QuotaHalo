@@ -220,6 +220,8 @@ docs/                        设计说明与服务适配资料
 
 先启动并登录本机 WorkBuddy，再返回 QuotaHalo 刷新。QuotaHalo 不会要求输入 WorkBuddy 密码。
 
+WorkBuddy 5.7.6 本机共享会话已观察到加密 Token。QuotaHalo 遇到该格式会显示“新版 WorkBuddy 登录态暂不兼容”，此时无法自动查询积分，重新登录不保证有效。目前自动读取仅兼容共享文件中的明文 Token。
+
 </details>
 
 <details>
