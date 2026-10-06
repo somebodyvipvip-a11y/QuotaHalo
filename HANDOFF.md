@@ -29,6 +29,7 @@ WorkBuddy 使用 `%LOCALAPPDATA%/CodeBuddyExtension/Data/Public/auth/workbuddy-d
 cargo test --manifest-path src-tauri/Cargo.toml
 & .\scripts\test-frontend-bootstrap.ps1
 node scripts/test-refresh-lifecycle.mjs
+node scripts/test-workbuddy-session.mjs
 cargo test --manifest-path src-tauri/Cargo.toml live_logged_in_codex_returns_quota_windows_over_a_reused_session -- --ignored
 ```
 
@@ -44,6 +45,6 @@ cargo build --release --manifest-path src-tauri/Cargo.toml
 
 ## 后续工作
 
-2026-10-06：WorkBuddy 本机版本 5.7.6.0 的共享会话 accessToken 已为 `$wbEncrypted: 1` / `envelope` 对象。0.7.1 修正为“新版 WorkBuddy 登录态暂不兼容”，不再误报未登录或被默认账户过滤隐藏；明文会话仍兼容。积分自动读取尚未恢复。调查本机 app.asar：`main/index.js` 中 `/workbuddy/probe` 仅返回 ok、app、version、platform；`auth:getAccountUsage` 在内部 stdio RPC 通道中，未验证可供第三方复用的连接入口。没有关闭加密、解密凭据或改动 WorkBuddy 配置。
+2026-10-06：0.7.2 已恢复 WorkBuddy 5.7.6.0 加密会话的积分读取，真实账号 `live_workbuddy_returns_a_balance` 通过。`workbuddy_session.cjs` 使用运行中的 WorkBuddy 程序（动态发现路径）在 Node 模式调用自带 storage 和凭据读取模块，私有 stdout 管道返回会话给 Rust，仍由现有 reqwest 只读接口取积分。不写死版本、安装位置、密钥或 bundle 的加密类/解析器导出名，不保存或记录 Token，不关闭加密。子进程隐藏且有 10 秒超时。当前加密会话要求 WorkBuddy 运行，标准字段格式已验证，`asym-v1` 尚未支持；未来内部模块布局变化仍可能需要适配。上一版 0.7.1 仅修正提示，不具备此读取能力。
 
 用真实 Qoder PAT 和 TRAE 登录会话核对响应路径、鉴权头、自动续期及最终积分口径。多显示器任务栏定位仍需在更多 Windows 配置下验证。

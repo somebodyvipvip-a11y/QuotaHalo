@@ -194,6 +194,8 @@ node .\scripts\test-refresh-lifecycle.mjs
 cargo test --locked --manifest-path src-tauri\Cargo.toml
 ~~~
 
+加密会话读取回归检查：`node scripts/test-workbuddy-session.mjs`。
+
 依赖真实 Codex CLI、WorkBuddy 登录态或网络连接的集成测试默认忽略，需要在相应本机环境中手动运行。
 
 ## 项目结构
@@ -220,7 +222,7 @@ docs/                        设计说明与服务适配资料
 
 先启动并登录本机 WorkBuddy，再返回 QuotaHalo 刷新。QuotaHalo 不会要求输入 WorkBuddy 密码。
 
-WorkBuddy 5.7.6 本机共享会话已观察到加密 Token。QuotaHalo 遇到该格式会显示“新版 WorkBuddy 登录态暂不兼容”，此时无法自动查询积分，重新登录不保证有效。目前自动读取仅兼容共享文件中的明文 Token。
+QuotaHalo 同时支持明文会话和 WorkBuddy 5.7.6 的加密会话。加密会话通过本机 WorkBuddy 自带运行时读取，需要先启动 WorkBuddy；不保存解密后的 Token，不修改其加密设置。更新 WorkBuddy 后如仍读取失败，请报告实际错误提示。
 
 </details>
 

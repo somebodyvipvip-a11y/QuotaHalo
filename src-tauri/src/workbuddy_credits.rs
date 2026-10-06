@@ -11,6 +11,8 @@ use reqwest::{
 use serde_json::{json, Value};
 use tokio::time::sleep;
 
+const SESSION_HELPER: &str = include_str!("workbuddy_session.cjs");
+
 use crate::{
     now_unix,
     services::{number, CreditSnapshot},
@@ -49,7 +51,7 @@ fn read_session(path: &Path) -> Result<Session, &'static str> {
         Some(Value::String(token)) if !token.is_empty() => token,
         Some(Value::String(_)) | Some(Value::Null) | None => return Err("请登录 WorkBuddy"),
         Some(token) if token.get("$wbEncrypted").and_then(Value::as_u64) == Some(1) => {
-            return Err("新版 WorkBuddy 登录态暂不兼容");
+            return Err("WorkBuddy 登录信息已加密");
         }
         Some(_) => return Err("WorkBuddy 登录信息无效"),
     };
@@ -133,6 +135,10 @@ pub async fn fetch() -> CreditSnapshot {
     };
     let session = match read_session(&path) {
         Ok(session) => session,
+        Err("WorkBuddy 登录信息已加密") => match read_encrypted_session().await {
+            Ok(session) => session,
+            Err(message) => return CreditSnapshot::missing(message),
+        },
         Err(message) => return CreditSnapshot::missing(message),
     };
     let client = match Client::builder()
@@ -198,6 +204,65 @@ pub async fn fetch() -> CreditSnapshot {
     CreditSnapshot::missing("WorkBuddy 暂时无法读取积分")
 }
 
+async fn read_encrypted_session() -> Result<Session, &'static str> {
+    use tokio::process::Command;
+    let operation = async {
+        let mut discover = Command::new("powershell.exe");
+        discover.args(["-NoProfile", "-NonInteractive", "-Command", "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); Get-Process WorkBuddy -ErrorAction SilentlyContinue | Where-Object Path | Select-Object -First 1 -ExpandProperty Path"]);
+        #[cfg(windows)]
+        discover.creation_flags(0x08000000);
+        discover.kill_on_drop(true);
+        let location = discover
+            .output()
+            .await
+            .map_err(|_| "无法定位 WorkBuddy 程序")?;
+        let executable =
+            String::from_utf8(location.stdout).map_err(|_| "无法定位 WorkBuddy 程序")?;
+        let executable = executable.trim();
+        if executable.is_empty() || !Path::new(executable).is_file() {
+            return Err("请先启动 WorkBuddy 后刷新");
+        }
+        let mut helper = Command::new(executable);
+        helper
+            .env("ELECTRON_RUN_AS_NODE", "1")
+            .args(["-e", SESSION_HELPER]);
+        #[cfg(windows)]
+        helper.creation_flags(0x08000000);
+        helper.kill_on_drop(true);
+        let output = helper
+            .output()
+            .await
+            .map_err(|_| "WorkBuddy 登录信息读取失败")?;
+        if !output.status.success() {
+            return Err("WorkBuddy 登录信息读取失败");
+        }
+        let value: Value =
+            serde_json::from_slice(&output.stdout).map_err(|_| "WorkBuddy 登录信息读取失败")?;
+        let token = value
+            .get("token")
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+            .ok_or("WorkBuddy 登录信息读取失败")?;
+        let uid = value
+            .get("uid")
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+            .ok_or("WorkBuddy 账号信息缺失")?;
+        Ok(Session {
+            token: token.to_owned(),
+            uid: uid.to_owned(),
+            enterprise_id: value
+                .get("enterprise_id")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned),
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(10), operation)
+        .await
+        .map_err(|_| "WorkBuddy 登录信息读取超时")?
+}
+
 fn retryable_status(status: StatusCode) -> bool {
     status == StatusCode::REQUEST_TIMEOUT
         || status == StatusCode::TOO_MANY_REQUESTS
@@ -222,10 +287,7 @@ mod tests {
                 json!({"auth":{"accessToken":token},"account":{"uid":"fixture"}}).to_string(),
             )
             .unwrap();
-            assert_eq!(
-                read_session(&path).err(),
-                Some("新版 WorkBuddy 登录态暂不兼容")
-            );
+            assert_eq!(read_session(&path).err(), Some("WorkBuddy 登录信息已加密"));
         }
         fs::write(
             &path,
